@@ -1,0 +1,463 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Quiet Progress // Fullstack Local</title>
+
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap"
+      rel="stylesheet"
+    />
+
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="app-layout">
+      <aside class="sidebar" aria-label="Navegação principal">
+        <div class="brand">
+          <div class="brand-mark">QP</div>
+          <div>
+            <strong>Quiet Progress</strong>
+            <span>Local OS</span>
+          </div>
+        </div>
+
+        <nav class="nav-menu">
+          <button class="nav-item active" data-route="cockpit" type="button">
+            <span class="nav-icon">◎</span>
+            <span>Cockpit</span>
+            <small>Geral</small>
+          </button>
+
+          <button class="nav-item" data-route="habits" type="button">
+            <span class="nav-icon">▣</span>
+            <span>Hábitos</span>
+            <small>Daily Core</small>
+          </button>
+
+          <button class="nav-item" data-route="tasks" type="button">
+            <span class="nav-icon">⌁</span>
+            <span>Tarefas</span>
+            <small>Daily Ops</small>
+          </button>
+
+          <button class="nav-item" data-route="stats" type="button">
+            <span class="nav-icon">⌬</span>
+            <span>Estatísticas</span>
+            <small>Analysis</small>
+          </button>
+        </nav>
+
+        <div class="sidebar-footer">
+          <button class="backup-btn" id="backupBtn" type="button">
+            <span>⇩</span>
+            Download Backup
+          </button>
+
+          <div class="mini-status">
+            <span class="pulse-dot"></span>
+            <span id="apiStatus">CONNECTING</span>
+          </div>
+        </div>
+      </aside>
+
+      <main class="main-shell">
+        <section class="view active-view" id="view-cockpit">
+          <header class="hud-header">
+            <section class="hero-card">
+              <div class="hero-orb"></div>
+              <div class="eyebrow">
+                <span class="pulse-dot"></span> Lock In Protocol
+              </div>
+              <h1 id="cockpitTitle" data-base-title="Quiet Progress Cockpit">Quiet Progress Cockpit</h1>
+              <p class="hero-copy">
+                Dados persistidos localmente em SQLite. Hábitos, tarefas e
+                mindset agora sobrevivem ao refresh.
+              </p>
+            </section>
+
+            <aside class="progress-card" aria-label="Progresso geral do dia">
+              <div>
+                <div class="progress-top">
+                  <div>
+                    <div class="card-label">Daily Completion</div>
+                    <p class="progress-meta" id="progressMeta">
+                      Carregando sistemas...
+                    </p>
+                  </div>
+                  <div class="chip" id="stateChip">SYNC</div>
+                </div>
+
+                <div class="progress-percent">
+                  <span id="progressPercent">0</span>%
+                </div>
+              </div>
+
+              <div class="progress-track">
+                <div class="progress-fill" id="progressFill"></div>
+              </div>
+            </aside>
+
+            <aside class="lockin-card" aria-label="Timer Lock In">
+              <div class="lockin-ring">
+                <div class="lockin-time" id="lockinTime">25:00</div>
+                <div class="lockin-label">LOCK IN</div>
+              </div>
+
+              <div class="lockin-presets" aria-label="Duração do Pomodoro">
+                <button
+                  class="lockin-preset active"
+                  data-minutes="25"
+                  type="button"
+                >
+                  25
+                </button>
+
+                <button class="lockin-preset" data-minutes="50" type="button">
+                  50
+                </button>
+
+                <button
+                  class="lockin-preset custom"
+                  data-custom="true"
+                  type="button"
+                >
+                  Custom
+                </button>
+              </div>
+
+              <div class="lockin-custom-wrap" id="lockinCustomWrap" hidden>
+                <input
+                  id="lockinCustomInput"
+                  type="number"
+                  min="1"
+                  max="180"
+                  value="25"
+                  aria-label="Minutos customizados"
+                />
+                <span>min</span>
+              </div>
+
+              <div class="lockin-controls">
+                <button id="lockinStartBtn" type="button">Start</button>
+                <button id="lockinPauseBtn" type="button">Pause</button>
+                <button id="lockinResetBtn" type="button">Reset</button>
+              </div>
+            </aside>
+          </header>
+
+          <section class="cockpit-grid">
+            <article class="panel highlight-panel">
+              <div class="panel-header">
+                <div>
+                  <div class="panel-kicker">Today</div>
+                  <h2 class="panel-title">Destaques do Dia</h2>
+                </div>
+                <span class="chip">Focus</span>
+              </div>
+
+              <div class="highlight-list" id="todayHighlights"></div>
+            </article>
+
+            <article class="panel cockpit-summary">
+              <div class="panel-header">
+                <div>
+                  <div class="panel-kicker">Quick Stats</div>
+                  <h2 class="panel-title">Resumo Operacional</h2>
+                </div>
+              </div>
+
+              <div class="stats-row">
+                <div class="stat-box">
+                  <div class="card-label">Completed</div>
+                  <div class="stat-value" id="doneCount">0</div>
+                </div>
+                <div class="stat-box">
+                  <div class="card-label">Remaining</div>
+                  <div class="stat-value" id="remainingCount">0</div>
+                </div>
+                <div class="stat-box">
+                  <div class="card-label">Focus State</div>
+                  <div class="stat-value" id="focusState">Cold</div>
+                </div>
+              </div>
+            </article>
+          </section>
+        </section>
+
+        <section class="view" id="view-habits">
+          <header class="page-header">
+            <div>
+              <div class="eyebrow">
+                <span class="pulse-dot"></span> Habit Tracker
+              </div>
+              <h1>Hábitos</h1>
+              <p>
+                Core diário carregado do SQLite. Clique para gravar ou inverter
+                o log de hoje.
+              </p>
+            </div>
+            <span class="chip" id="habitCountChip">0 Core</span>
+          </header>
+
+          <section class="wide-grid">
+            <article class="panel large-panel">
+              <div class="panel-header">
+                <div>
+                  <div class="panel-kicker">Daily Core</div>
+                  <h2 class="panel-title">Lista de Hábitos</h2>
+                </div>
+                <span class="chip">SQLite Log</span>
+              </div>
+
+              <form class="habit-form" id="habitForm">
+                <input
+                  id="habitTitleInput"
+                  type="text"
+                  placeholder="Novo hábito..."
+                  autocomplete="off"
+                />
+                <button type="submit" aria-label="Adicionar hábito">+</button>
+              </form>
+
+              <ul class="habit-list" id="habitList"></ul>
+            </article>
+
+            <article class="panel mindset-panel">
+              <div class="panel-header">
+                <div>
+                  <div class="panel-kicker">Mindset</div>
+                  <h2 class="panel-title">Status Interno</h2>
+                </div>
+                <span class="chip">Auto Save</span>
+              </div>
+              <div class="mindset-grid" id="mindsetGrid"></div>
+
+              <div class="journal-box">
+                <label for="mindsetNotes">Journal do dia</label>
+                <textarea
+                  id="mindsetNotes"
+                  placeholder="Notas rápidas do dia, travas, progresso, próximos passos..."
+                ></textarea>
+
+                <button id="saveJournalBtn" type="button">
+                  Salvar Journal
+                </button>
+
+                <button
+                  id="exportObsidianBtn"
+                  class="status-btn export-obsidian-btn"
+                  type="button"
+                >
+                  Exportar para Obsidian (.md)
+                </button>
+
+                <div class="journal-feed-wrap">
+                  <div class="journal-feed-header">
+                    <span>Reflexões passadas</span>
+                    <button id="reloadJournalBtn" type="button">
+                      Atualizar
+                    </button>
+                  </div>
+
+                  <div id="journal-feed" class="journal-feed"></div>
+                </div>
+              </div>
+            </article>
+          </section>
+        </section>
+
+        <section class="view" id="view-tasks">
+          <header class="page-header">
+            <div>
+              <div class="eyebrow">
+                <span class="pulse-dot"></span> Daily Ops
+              </div>
+              <h1 id="tasksTitle" data-base-title="Tarefas">Tarefas</h1>
+              <p>
+                Tarefas do dia salvas no banco local. Marcar como concluída
+                atualiza o progresso global.
+              </p>
+            </div>
+            <span class="chip" id="taskCountChip">0 Ops</span>
+          </header>
+
+          <section class="panel large-panel">
+            <div class="panel-header">
+              <div>
+                <div class="panel-kicker">Execution</div>
+                <h2 class="panel-title">Task Manager</h2>
+              </div>
+              <span class="chip">Persistent</span>
+            </div>
+
+            <form class="task-form" id="taskForm">
+              <input
+                id="taskTitleInput"
+                type="text"
+                placeholder="Nova tarefa para hoje..."
+                autocomplete="off"
+              />
+              <select id="taskPriorityInput">
+                <option value="ALTA">Alta</option>
+                <option value="MÉDIA" selected>Média</option>
+                <option value="BAIXA">Baixa</option>
+              </select>
+              <button type="submit">Adicionar</button>
+            </form>
+            <ul class="task-list" id="taskList"></ul>
+
+            <div class="task-history-panel">
+              <button
+                class="history-toggle-btn"
+                id="taskHistoryBtn"
+                type="button"
+              >
+                Ver Histórico
+              </button>
+
+              <div class="task-history-list" id="taskHistoryList" hidden></div>
+            </div>
+          </section>
+        </section>
+
+        <section class="view" id="view-stats">
+          <header class="page-header">
+            <div>
+              <div class="eyebrow">
+                <span class="pulse-dot"></span> Analysis
+              </div>
+              <h1>Estatísticas</h1>
+              <p>
+                Dados reais do SQLite: progresso diário, ranking de hábitos,
+                mindset e mapa de consistência.
+              </p>
+            </div>
+            <span class="chip">Dashboard</span>
+          </header>
+
+          <section class="panel system-tools-panel">
+            <div class="panel-header">
+              <div>
+                <div class="panel-kicker">System Tools</div>
+                <h2 class="panel-title">Backup & Restore</h2>
+              </div>
+              <span class="chip">Local DB</span>
+            </div>
+
+            <div class="system-tools-actions">
+              <button class="system-tool-btn" id="restoreDbBtn" type="button">
+                Restaurar Banco de Dados
+              </button>
+
+              <input id="restoreDbInput" type="file" accept=".db" hidden />
+            </div>
+          </section>
+
+          <section class="panel weekly-panel">
+            <div class="panel-header">
+              <div>
+                <div class="panel-kicker">Weekly Tracker</div>
+                <h2 class="panel-title">Hábitos da Semana</h2>
+              </div>
+              <span class="chip">Seg → Dom</span>
+            </div>
+
+            <div id="weekly-tracker" class="weekly-tracker-grid"></div>
+          </section>
+
+          <section class="stats-dashboard">
+            <article class="panel chart-card wide-chart">
+              <div class="panel-header">
+                <div>
+                  <div class="panel-kicker">Monthly Performance</div>
+                  <h2 class="panel-title">Progresso Mensal</h2>
+                </div>
+                <span class="chip">Real Data</span>
+              </div>
+
+              <div class="chart-canvas-wrap">
+                <canvas id="progressChart"></canvas>
+              </div>
+            </article>
+
+            <article class="panel chart-card">
+              <div class="panel-header">
+                <div>
+                  <div class="panel-kicker">Consistency</div>
+                  <h2 class="panel-title">Ranking de Hábitos</h2>
+                </div>
+              </div>
+
+              <div class="chart-canvas-wrap">
+                <canvas id="habitsChart"></canvas>
+              </div>
+            </article>
+
+            <article class="panel chart-card">
+              <div class="panel-header">
+                <div>
+                  <div class="panel-kicker">Mindset</div>
+                  <h2 class="panel-title">Energia / Foco / Humor</h2>
+                </div>
+              </div>
+
+              <div class="chart-canvas-wrap">
+                <canvas id="mindsetChart"></canvas>
+              </div>
+            </article>
+
+            <article class="panel chart-card wide-chart">
+              <div class="panel-header">
+                <div>
+                  <div class="panel-kicker">Habit Heatmap</div>
+                  <h2 class="panel-title">Mapa de Consistência</h2>
+                </div>
+              </div>
+
+              <div
+                class="heatmap-grid"
+                id="heatmapGrid"
+                aria-hidden="true"
+              ></div>
+            </article>
+          </section>
+        </section>
+      </main>
+    </div>
+
+    <div class="modal-overlay" id="modalOverlay" hidden>
+      <div
+        class="modal-card"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="modalTitle"
+      >
+        <div class="modal-kicker">Quiet Progress</div>
+        <h2 id="modalTitle">Confirmação</h2>
+        <p id="modalMessage">Tem certeza?</p>
+
+        <div class="modal-input-wrap" id="modalInputWrap" hidden>
+          <input id="modalInput" type="text" autocomplete="off" />
+        </div>
+
+        <div class="modal-actions">
+          <button class="modal-btn ghost" id="modalCancelBtn" type="button">
+            Cancelar
+          </button>
+
+          <button class="modal-btn danger" id="modalConfirmBtn" type="button">
+            Confirmar
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div class="toast" id="toast"></div>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="./app.js"></script>
+  </body>
+</html>
