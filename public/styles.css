@@ -3416,3 +3416,411 @@ body.focus-mode .lockin-ring {
     font-size: 11px;
   }
 }
+
+
+/* ==========================================================================
+   MOBILE RESPONSIVENESS FIX — NO GLOBAL HORIZONTAL SCROLL
+   Escopo: correção de responsividade. Não altera backend nem features.
+   ========================================================================== */
+
+html,
+body {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+body {
+  position: relative;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+img,
+canvas,
+svg,
+video {
+  max-width: 100%;
+}
+
+.app-layout,
+.main-shell,
+.view,
+.panel,
+.month-dashboard-grid,
+.stats-grid,
+.overview-grid,
+.today-layout,
+.tracker-toolbar,
+.tracker-section,
+.tracker-checkin {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.main-shell {
+  overflow-x: hidden;
+}
+
+.habit-matrix-wrap,
+.week-day-tabs,
+.wide-chart,
+.chart-scroll-wrap {
+  overscroll-behavior-x: contain;
+}
+
+/* Desktop preservado. Ajustes fortes só entram em tablet/mobile. */
+
+@media (max-width: 768px) {
+  html,
+  body {
+    width: 100%;
+    max-width: 100%;
+    overflow-x: hidden;
+  }
+
+  body {
+    min-width: 0;
+  }
+
+  .mobile-topbar {
+    position: sticky;
+    top: 0;
+    z-index: 90;
+    width: 100%;
+    max-width: 100%;
+  }
+
+  .app-layout {
+    display: block;
+    width: 100%;
+    max-width: 100%;
+    overflow-x: hidden;
+  }
+
+  .main-shell {
+    width: 100%;
+    max-width: 100%;
+    margin: 0;
+    padding: 10px 8px calc(86px + var(--safe-bottom));
+    overflow-x: hidden;
+  }
+
+  /*
+    O hero grande não pode ficar preso no mobile.
+    Ele vira um bloco normal da página.
+  */
+  .temporal-header {
+    position: relative !important;
+    top: auto !important;
+    z-index: 1;
+    width: 100%;
+    max-width: 100%;
+    margin: 8px 0 12px;
+    padding: 12px;
+    border-radius: 22px;
+  }
+
+  .temporal-header h1 {
+    max-width: 100%;
+    font-size: clamp(2rem, 13vw, 3.1rem);
+    line-height: 0.92;
+    overflow-wrap: anywhere;
+  }
+
+  .temporal-line,
+  .header-actions,
+  .month-controls,
+  .history-filters,
+  .export-controls,
+  .system-tools-actions,
+  .week-nav,
+  .panel-actions {
+    width: 100%;
+    max-width: 100%;
+  }
+
+  .temporal-line span,
+  .tracker-date-line span {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .header-actions,
+  .month-controls,
+  .panel-actions,
+  .week-nav {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+
+  .primary-btn,
+  .ghost-btn,
+  .status-btn,
+  .mini-action,
+  .system-tool-btn,
+  .month-controls button,
+  .month-controls input {
+    width: 100%;
+    max-width: 100%;
+  }
+
+  .panel {
+    width: 100%;
+    max-width: 100%;
+    padding: 14px;
+    border-radius: 22px;
+    overflow: hidden;
+  }
+
+  .panel-header {
+    width: 100%;
+    max-width: 100%;
+    gap: 12px;
+  }
+
+  .overview-grid,
+  .stats-grid,
+  .month-dashboard-grid,
+  .today-layout,
+  .tracker-toolbar,
+  .tracker-checkin {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) !important;
+    width: 100%;
+    max-width: 100%;
+    gap: 12px;
+  }
+
+  /*
+    Sidebar no mobile fica drawer. Não ocupa coluna, não esmaga conteúdo.
+  */
+  .sidebar {
+    position: fixed;
+    width: min(84vw, 310px);
+    max-width: min(84vw, 310px);
+    transform: translateX(-105%);
+    transition: transform 200ms ease;
+  }
+
+  body.sidebar-open .sidebar {
+    transform: translateX(0);
+  }
+
+  .sidebar-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 45;
+    display: none;
+    background: rgba(0, 0, 0, 0.65);
+    backdrop-filter: blur(4px);
+  }
+
+  body.sidebar-open .sidebar-overlay {
+    display: block;
+  }
+
+  /*
+    Habit Matrix: único local permitido para scroll horizontal do grid mensal.
+  */
+  .habit-grid-panel {
+    overflow: hidden;
+  }
+
+  .habit-matrix-wrap {
+    width: 100%;
+    max-width: 100%;
+    overflow-x: auto;
+    overflow-y: hidden;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-x: contain;
+    touch-action: pan-x pan-y;
+  }
+
+  .habit-matrix {
+    width: max-content;
+    min-width: max-content;
+    max-width: none;
+  }
+
+  .qpmatrix {
+    width: max-content;
+    min-width: max-content;
+    max-width: none;
+  }
+
+  /*
+    Week Task Tracker:
+    no mobile, cards empilhados. Nada de 7 colunas forçando largura da página.
+  */
+  .week-day-tabs {
+    width: 100%;
+    max-width: 100%;
+    overflow-x: auto;
+    overflow-y: hidden;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-x: contain;
+    touch-action: pan-x;
+    padding-bottom: 10px;
+    margin-inline: 0;
+  }
+
+  .week-tab {
+    flex: 0 0 auto;
+  }
+
+  .week-cards {
+    display: grid !important;
+    grid-template-columns: minmax(0, 1fr) !important;
+    grid-auto-flow: row !important;
+    grid-auto-columns: auto !important;
+    width: 100%;
+    max-width: 100%;
+    overflow-x: hidden !important;
+    overflow-y: visible;
+    gap: 12px;
+    padding-bottom: 0;
+  }
+
+  .week-card {
+    width: 100%;
+    min-width: 0 !important;
+    max-width: 100%;
+  }
+
+  .task-list,
+  .habit-list,
+  .task-item,
+  .habit-item,
+  .task-mini {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .task-item,
+  .habit-item {
+    width: 100%;
+  }
+
+  .item-main {
+    min-width: 0;
+  }
+
+  .item-title,
+  .item-subtitle,
+  .task-meta {
+    overflow-wrap: anywhere;
+  }
+
+  /*
+    Gráficos: só o card do gráfico de linha pode rolar internamente,
+    nunca a página inteira.
+  */
+  .wide-chart {
+    width: 100%;
+    max-width: 100%;
+    overflow-x: auto;
+    overflow-y: hidden;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-x: contain;
+  }
+
+  .wide-chart .chart-wrap.line {
+    width: 620px;
+    min-width: 620px;
+    max-width: none;
+  }
+
+  .chart-card:not(.wide-chart) .chart-wrap {
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  /*
+    Bottom nav permanece fixa, mas sem provocar overflow lateral.
+  */
+  .bottom-nav {
+    left: 8px;
+    right: 8px;
+    width: auto;
+    max-width: calc(100% - 16px);
+  }
+
+  .toast {
+    left: 12px;
+    right: 12px;
+    max-width: calc(100% - 24px);
+  }
+}
+
+@media (max-width: 430px) {
+  .main-shell {
+    padding-left: 8px;
+    padding-right: 8px;
+  }
+
+  .temporal-header {
+    padding: 12px;
+  }
+
+  .temporal-header h1 {
+    font-size: clamp(1.9rem, 12.5vw, 2.75rem);
+  }
+
+  .panel {
+    padding: 12px;
+  }
+
+  .week-card {
+    padding: 14px;
+  }
+}
+
+@media (max-width: 390px) {
+  .main-shell {
+    padding-left: 7px;
+    padding-right: 7px;
+  }
+
+  .temporal-header h1 {
+    font-size: clamp(1.8rem, 12vw, 2.55rem);
+  }
+
+  .temporal-line {
+    gap: 7px;
+  }
+}
+
+@media (max-width: 360px) {
+  .main-shell {
+    padding-left: 6px;
+    padding-right: 6px;
+  }
+
+  .panel {
+    padding: 11px;
+  }
+
+  .bottom-nav {
+    left: 6px;
+    right: 6px;
+    max-width: calc(100% - 12px);
+  }
+
+  .bottom-nav-item {
+    font-size: 9px;
+    letter-spacing: 0;
+  }
+}
+
+@media (min-width: 769px) {
+  .main-shell {
+    overflow-x: visible;
+  }
+}
