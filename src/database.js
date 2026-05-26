@@ -1,28 +1,28 @@
 const sqlite3 = require('sqlite3').verbose();
 const path = require('path');
+const fs = require('fs');
 
 const DB_PATH = path.join(__dirname, '..', 'quiet_progress.db');
 
 let db = null;
 
 function connectDatabase() {
+  if (db) return db;
+
   db = new sqlite3.Database(DB_PATH, (error) => {
     if (error) {
       console.error('[SQLite] Erro ao abrir banco:', error.message);
       process.exit(1);
     }
 
-    console.log(`[SQLite] Banco conectado em: ${DB_PATH}`);
+    console.log(`[SQLite] Banco conectado: ${DB_PATH}`);
   });
 
   return db;
 }
 
 function getDb() {
-  if (!db) {
-    connectDatabase();
-  }
-
+  if (!db) connectDatabase();
   return db;
 }
 
@@ -72,14 +72,69 @@ function all(sql, params = []) {
   });
 }
 
+function nowISO() {
+  return new Date().toISOString();
+}
+
+function todayISO() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+async function tableExists(table) {
+  const row = await get(
+    `SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?`,
+    [table]
+  );
+
+  return Boolean(row);
+}
+
+async function getColumns(table) {
+  if (!(await tableExists(table))) return [];
+  return all(`PRAGMA table_info(${table})`);
+}
+
+async function hasColumn(table, column) {
+  const columns = await getColumns(table);
+  return columns.some((item) => item.name === column);
+}
+
+async function addColumnIfMissing(table, column, definition) {
+  const exists = await hasColumn(table, column);
+
+  if (!exists) {
+    await run(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+    console.log(`[SQLite] Migração: coluna adicionada ${table}.${column}`);
+  }
+}
+
+async function createIndex(sql) {
+  try {
+    await run(sql);
+  } catch (error) {
+    console.warn('[SQLite] Índice não criado:', error.message);
+  }
+}
+
 async function initDatabase() {
-  await run('PRAGMA foreign_keys = ON');
+  connectDatabase();
+
+  await run(`PRAGMA foreign_keys = ON`);
+  await run(`PRAGMA journal_mode = WAL`).catch(() => {});
+  await run(`PRAGMA synchronous = NORMAL`).catch(() => {});
 
   await run(`
     CREATE TABLE IF NOT EXISTS habitos (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
-      titulo TEXT NOT NULL UNIQUE,
-      subtitulo TEXT NOT NULL
+      titulo TEXT NOT NULL,
+      subtitulo TEXT DEFAULT '',
+      ativo INTEGER NOT NULL DEFAULT 1,
+      cor TEXT DEFAULT NULL,
+      ordem INTEGER DEFAULT 0,
+      data_inicio TEXT DEFAULT NULL,
+      data_fim TEXT DEFAULT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT
     )
   `);
 
@@ -87,10 +142,12 @@ async function initDatabase() {
     CREATE TABLE IF NOT EXISTS habitos_log (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       habito_id INTEGER NOT NULL,
-      data_registro TEXT NOT NULL,
+      data_ref TEXT NOT NULL,
       concluido INTEGER NOT NULL DEFAULT 0 CHECK (concluido IN (0, 1)),
-      FOREIGN KEY (habito_id) REFERENCES habitos(id) ON DELETE CASCADE,
-      UNIQUE (habito_id, data_registro)
+      created_at TEXT NOT NULL,
+      updated_at TEXT,
+      FOREIGN KEY (habito_id) REFERENCES habitos(id),
+      UNIQUE (habito_id, data_ref)
     )
   `);
 
@@ -98,70 +155,203 @@ async function initDatabase() {
     CREATE TABLE IF NOT EXISTS tarefas (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       titulo TEXT NOT NULL,
-      prioridade TEXT NOT NULL DEFAULT 'MÉDIA' CHECK (prioridade IN ('ALTA', 'MÉDIA', 'BAIXA')),
-      status TEXT NOT NULL DEFAULT 'PENDENTE' CHECK (status IN ('PENDENTE', 'CONCLUIDO')),
-      data_criacao TEXT NOT NULL
+      descricao TEXT DEFAULT '',
+      prioridade TEXT NOT NULL DEFAULT 'MÉDIA',
+      status TEXT NOT NULL DEFAULT 'PENDENTE',
+      data_ref TEXT NOT NULL,
+      tipo TEXT DEFAULT 'task',
+      ativo INTEGER NOT NULL DEFAULT 1,
+      ordem INTEGER DEFAULT 0,
+      created_at TEXT NOT NULL,
+      updated_at TEXT
     )
   `);
 
   await run(`
     CREATE TABLE IF NOT EXISTS mindset (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
-    data_registro TEXT NOT NULL UNIQUE,
-    energia INTEGER NOT NULL DEFAULT 2 CHECK (energia BETWEEN 1 AND 3),
-    foco INTEGER NOT NULL DEFAULT 2 CHECK (foco BETWEEN 1 AND 3),
-    humor INTEGER NOT NULL DEFAULT 2 CHECK (humor BETWEEN 1 AND 3),
-    notas TEXT
+      data_ref TEXT NOT NULL UNIQUE,
+      energia INTEGER NOT NULL DEFAULT 2 CHECK (energia BETWEEN 1 AND 5),
+      foco INTEGER NOT NULL DEFAULT 2 CHECK (foco BETWEEN 1 AND 5),
+      motivacao INTEGER NOT NULL DEFAULT 2 CHECK (motivacao BETWEEN 1 AND 5),
+      humor INTEGER NOT NULL DEFAULT 2 CHECK (humor BETWEEN 1 AND 5),
+      notas TEXT DEFAULT '',
+      created_at TEXT NOT NULL,
+      updated_at TEXT
     )
   `);
 
-  await new Promise((resolve) => {
-    db.run(`ALTER TABLE mindset ADD COLUMN notas TEXT`, (error) => {
-      if (error) {
-        // SQLite retorna erro se a coluna já existe. Isso é esperado.
-        if (error.message.includes('duplicate column name')) {
-          console.log('[SQLite] Coluna mindset.notas já existe.');
-        } else {
-          console.warn(
-            '[SQLite] Não foi possível adicionar mindset.notas:',
-            error.message
-          );
-        }
-      } else {
-        console.log('[SQLite] Coluna mindset.notas adicionada.');
-      }
+  /*
+    Migrações defensivas para versões antigas.
+    Não apaga histórico. Apenas cria colunas novas quando possível.
+  */
+  await addColumnIfMissing('habitos', 'subtitulo', "TEXT DEFAULT ''");
+  await addColumnIfMissing('habitos', 'ativo', 'INTEGER NOT NULL DEFAULT 1');
+  await addColumnIfMissing('habitos', 'cor', 'TEXT DEFAULT NULL');
+  await addColumnIfMissing('habitos', 'ordem', 'INTEGER DEFAULT 0');
+  await addColumnIfMissing('habitos', 'data_inicio', 'TEXT DEFAULT NULL');
+  await addColumnIfMissing('habitos', 'data_fim', 'TEXT DEFAULT NULL');
+  await addColumnIfMissing('habitos', 'created_at', 'TEXT');
+  await addColumnIfMissing('habitos', 'updated_at', 'TEXT');
 
-      resolve();
-    });
-  });
+  await addColumnIfMissing('habitos_log', 'data_ref', 'TEXT');
+  await addColumnIfMissing('habitos_log', 'concluido', 'INTEGER NOT NULL DEFAULT 0 CHECK (concluido IN (0, 1))');
+  await addColumnIfMissing('habitos_log', 'created_at', 'TEXT');
+  await addColumnIfMissing('habitos_log', 'updated_at', 'TEXT');
 
-  const defaultHabits = [
-    ['Beber água', 'Hidratação básica antes de cafeína infinita.'],
-    ['Movimento físico', 'Treino, caminhada ou alongamento. Sem heroísmo.'],
-    ['Bloco de foco', 'Uma sessão real sem pular para 12 abas.'],
-    [
-      'Fechamento do dia',
-      'Registrar o que andou, o que travou e o próximo passo.',
-    ],
-  ];
+  await addColumnIfMissing('tarefas', 'descricao', "TEXT DEFAULT ''");
+  await addColumnIfMissing('tarefas', 'prioridade', "TEXT NOT NULL DEFAULT 'MÉDIA'");
+  await addColumnIfMissing('tarefas', 'status', "TEXT NOT NULL DEFAULT 'PENDENTE'");
+  await addColumnIfMissing('tarefas', 'data_ref', 'TEXT');
+  await addColumnIfMissing('tarefas', 'tipo', "TEXT DEFAULT 'task'");
+  await addColumnIfMissing('tarefas', 'ativo', 'INTEGER NOT NULL DEFAULT 1');
+  await addColumnIfMissing('tarefas', 'ordem', 'INTEGER DEFAULT 0');
+  await addColumnIfMissing('tarefas', 'created_at', 'TEXT');
+  await addColumnIfMissing('tarefas', 'updated_at', 'TEXT');
 
-  for (const [titulo, subtitulo] of defaultHabits) {
-    await run(
-      `INSERT OR IGNORE INTO habitos (titulo, subtitulo) VALUES (?, ?)`,
-      [titulo, subtitulo]
-    );
+  await addColumnIfMissing('mindset', 'data_ref', 'TEXT');
+  await addColumnIfMissing('mindset', 'energia', 'INTEGER NOT NULL DEFAULT 2 CHECK (energia BETWEEN 1 AND 5)');
+  await addColumnIfMissing('mindset', 'foco', 'INTEGER NOT NULL DEFAULT 2 CHECK (foco BETWEEN 1 AND 5)');
+  await addColumnIfMissing('mindset', 'motivacao', 'INTEGER NOT NULL DEFAULT 2 CHECK (motivacao BETWEEN 1 AND 5)');
+  await addColumnIfMissing('mindset', 'humor', 'INTEGER NOT NULL DEFAULT 2 CHECK (humor BETWEEN 1 AND 5)');
+  await addColumnIfMissing('mindset', 'notas', "TEXT DEFAULT ''");
+  await addColumnIfMissing('mindset', 'created_at', 'TEXT');
+  await addColumnIfMissing('mindset', 'updated_at', 'TEXT');
+
+  const now = nowISO();
+  const today = todayISO();
+
+  await run(`UPDATE habitos SET created_at = COALESCE(created_at, ?), updated_at = COALESCE(updated_at, ?)`, [now, now]);
+
+  if (await hasColumn('habitos_log', 'data_registro')) {
+    await run(`
+      UPDATE habitos_log
+      SET data_ref = COALESCE(data_ref, data_registro, ?)
+      WHERE data_ref IS NULL OR TRIM(data_ref) = ''
+    `, [today]);
+  } else {
+    await run(`
+      UPDATE habitos_log
+      SET data_ref = COALESCE(data_ref, ?)
+      WHERE data_ref IS NULL OR TRIM(data_ref) = ''
+    `, [today]);
   }
 
-  console.log('[SQLite] Estrutura inicializada.');
+  await run(`
+    UPDATE habitos_log
+    SET created_at = COALESCE(created_at, ?), updated_at = COALESCE(updated_at, ?)
+  `, [now, now]);
+
+  if (await hasColumn('tarefas', 'data_criacao')) {
+    await run(`
+      UPDATE tarefas
+      SET data_ref = COALESCE(data_ref, data_criacao, ?)
+      WHERE data_ref IS NULL OR TRIM(data_ref) = ''
+    `, [today]);
+  } else if (await hasColumn('tarefas', 'data_agendada')) {
+    await run(`
+      UPDATE tarefas
+      SET data_ref = COALESCE(data_ref, data_agendada, ?)
+      WHERE data_ref IS NULL OR TRIM(data_ref) = ''
+    `, [today]);
+  } else {
+    await run(`
+      UPDATE tarefas
+      SET data_ref = COALESCE(data_ref, ?)
+      WHERE data_ref IS NULL OR TRIM(data_ref) = ''
+    `, [today]);
+  }
+
+  if (await hasColumn('tarefas', 'concluido')) {
+    await run(`
+      UPDATE tarefas
+      SET status = CASE WHEN concluido = 1 THEN 'CONCLUIDO' ELSE status END
+      WHERE concluido IS NOT NULL
+    `).catch(() => {});
+  }
+
+  await run(`
+    UPDATE tarefas
+    SET created_at = COALESCE(created_at, ?), updated_at = COALESCE(updated_at, ?),
+        descricao = COALESCE(descricao, subtitulo, ''),
+        prioridade = COALESCE(prioridade, 'MÉDIA'),
+        status = COALESCE(status, 'PENDENTE')
+  `, [now, now]).catch(async () => {
+    await run(`
+      UPDATE tarefas
+      SET created_at = COALESCE(created_at, ?), updated_at = COALESCE(updated_at, ?),
+          descricao = COALESCE(descricao, ''),
+          prioridade = COALESCE(prioridade, 'MÉDIA'),
+          status = COALESCE(status, 'PENDENTE')
+    `, [now, now]);
+  });
+
+  if (await hasColumn('mindset', 'data_registro')) {
+    await run(`
+      UPDATE mindset
+      SET data_ref = COALESCE(data_ref, data_registro, ?)
+      WHERE data_ref IS NULL OR TRIM(data_ref) = ''
+    `, [today]);
+  } else {
+    await run(`
+      UPDATE mindset
+      SET data_ref = COALESCE(data_ref, ?)
+      WHERE data_ref IS NULL OR TRIM(data_ref) = ''
+    `, [today]);
+  }
+
+  await run(`
+    UPDATE mindset
+    SET created_at = COALESCE(created_at, ?),
+        updated_at = COALESCE(updated_at, ?),
+        motivacao = COALESCE(motivacao, 2),
+        humor = COALESCE(humor, 2),
+        notas = COALESCE(notas, '')
+  `, [now, now]);
+
+  await createIndex(`CREATE INDEX IF NOT EXISTS idx_habitos_ativo ON habitos(ativo)`);
+  await createIndex(`CREATE INDEX IF NOT EXISTS idx_habitos_datas ON habitos(data_inicio, data_fim)`);
+  await createIndex(`CREATE INDEX IF NOT EXISTS idx_habitos_log_data ON habitos_log(data_ref)`);
+  await createIndex(`CREATE UNIQUE INDEX IF NOT EXISTS idx_habitos_log_unique ON habitos_log(habito_id, data_ref)`);
+  await createIndex(`CREATE INDEX IF NOT EXISTS idx_tarefas_data ON tarefas(data_ref)`);
+  await createIndex(`CREATE INDEX IF NOT EXISTS idx_tarefas_data_ativo ON tarefas(data_ref, ativo)`);
+  await createIndex(`CREATE INDEX IF NOT EXISTS idx_mindset_data ON mindset(data_ref)`);
+
+  const count = await get(`SELECT COUNT(*) AS total FROM habitos`);
+  if (Number(count?.total || 0) === 0) {
+    const defaults = [
+      ['Beber água', 'Hidratação básica diária.', '#11CAA0'],
+      ['Movimento físico', 'Treino, caminhada ou alongamento.', '#DEFF9A'],
+      ['Bloco de foco', 'Sessão real de trabalho profundo.', '#BC84EE'],
+      ['Fechamento do dia', 'Registrar aprendizados e próximo passo.', '#FFD166']
+    ];
+
+    for (let i = 0; i < defaults.length; i += 1) {
+      const [titulo, subtitulo, cor] = defaults[i];
+      await run(
+        `
+        INSERT INTO habitos (titulo, subtitulo, cor, ordem, ativo, created_at, updated_at)
+        VALUES (?, ?, ?, ?, 1, ?, ?)
+        `,
+        [titulo, subtitulo, cor, i, now, now]
+      );
+    }
+  }
+
+  console.log('[SQLite] Estrutura v3 temporal inicializada.');
+}
+
+function databaseExists() {
+  return fs.existsSync(DB_PATH);
 }
 
 module.exports = {
   DB_PATH,
-  getDb,
   connectDatabase,
   closeDatabase,
   run,
   get,
   all,
   initDatabase,
+  databaseExists
 };

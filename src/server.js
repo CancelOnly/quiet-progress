@@ -1,30 +1,31 @@
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
+const os = require('os');
 const fs = require('fs');
 const multer = require('multer');
-const os = require('os');
 
 const {
   DB_PATH,
   initDatabase,
-  closeDatabase,
   connectDatabase,
+  closeDatabase,
   run,
   get,
   all,
+  databaseExists
 } = require('./database');
 
 const app = express();
-const PORT = process.env.PORT || 3000;
-
+const PORT = Number(process.env.PORT || 3000);
 const UPLOAD_DIR = path.join(__dirname, '..', 'uploads');
+
 fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
 const upload = multer({
   dest: UPLOAD_DIR,
   limits: {
-    fileSize: 50 * 1024 * 1024,
+    fileSize: 80 * 1024 * 1024
   },
   fileFilter: (request, file, callback) => {
     if (!file.originalname.toLowerCase().endsWith('.db')) {
@@ -33,24 +34,60 @@ const upload = multer({
     }
 
     callback(null, true);
-  },
+  }
 });
 
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '2mb' }));
 app.use(express.static(path.join(__dirname, '..', 'public')));
 
-function getPaginationParams(request, defaultLimit = 20, maxLimit = 100) {
-  const page = Math.max(Number.parseInt(request.query.page, 10) || 1, 1);
-  const rawLimit = Number.parseInt(request.query.limit, 10) || defaultLimit;
-  const limit = Math.min(Math.max(rawLimit, 1), maxLimit);
-  const offset = (page - 1) * limit;
-
-  return { page, limit, offset };
+function nowISO() {
+  return new Date().toISOString();
 }
 
 function todayISO() {
   return new Date().toISOString().slice(0, 10);
+}
+
+function isValidISODate(value) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(String(value || ''));
+}
+
+function isValidMonth(value) {
+  return /^\d{4}-\d{2}$/.test(String(value || ''));
+}
+
+function normalizeDate(value) {
+  return isValidISODate(value) ? value : todayISO();
+}
+
+function normalizeMonth(value) {
+  if (isValidMonth(value)) return value;
+
+  const today = todayISO();
+  return today.slice(0, 7);
+}
+
+function clampNumber(value, min, max, fallback) {
+  const number = Number(value);
+
+  if (!Number.isFinite(number)) return fallback;
+
+  return Math.min(Math.max(Math.round(number), min), max);
+}
+
+function sanitizePriority(value) {
+  const normalized = String(value || 'MÉDIA').toUpperCase();
+
+  if (['ALTA', 'MÉDIA', 'MEDIA', 'BAIXA'].includes(normalized)) {
+    return normalized === 'MEDIA' ? 'MÉDIA' : normalized;
+  }
+
+  return 'MÉDIA';
+}
+
+function sanitizeStatus(value) {
+  return String(value || '').toUpperCase() === 'CONCLUIDO' ? 'CONCLUIDO' : 'PENDENTE';
 }
 
 function addDaysISO(dateISO, amount) {
@@ -59,1194 +96,91 @@ function addDaysISO(dateISO, amount) {
   return date.toISOString().slice(0, 10);
 }
 
-function getLast7Days() {
-  const today = todayISO();
-  const dates = [];
-
-  for (let i = 6; i >= 0; i--) {
-    dates.push(addDaysISO(today, -i));
-  }
-
-  return dates;
-}
-
-async function calculateHabitStreak(habitId, baseDate = todayISO()) {
-  let streak = 0;
-  let cursor = baseDate;
-
-  const todayLog = await get(
-    `
-    SELECT concluido
-    FROM habitos_log
-    WHERE habito_id = ?
-      AND data_registro = ?
-    `,
-    [habitId, baseDate]
-  );
-
-  // Se hoje ainda não foi marcado, começa contando de ontem.
-  if (!todayLog || Number(todayLog.concluido) !== 1) {
-    cursor = addDaysISO(baseDate, -1);
-  }
-
-  while (true) {
-    const row = await get(
-      `
-      SELECT concluido
-      FROM habitos_log
-      WHERE habito_id = ?
-        AND data_registro = ?
-      `,
-      [habitId, cursor]
-    );
-
-    if (!row || Number(row.concluido) !== 1) break;
-
-    streak += 1;
-    cursor = addDaysISO(cursor, -1);
-  }
-
-  return streak;
-}
-
-function normalizePriority(priority = 'MÉDIA') {
-  const value = String(priority).trim().toUpperCase();
-
-  if (['ALTA', 'MÉDIA', 'MEDIA', 'BAIXA'].includes(value)) {
-    return value === 'MEDIA' ? 'MÉDIA' : value;
-  }
-
-  return 'MÉDIA';
-}
-
-function normalizeStatus(status = 'PENDENTE') {
-  const value = String(status).trim().toUpperCase();
-
-  if (['PENDENTE', 'CONCLUIDO', 'CONCLUÍDO'].includes(value)) {
-    return value === 'CONCLUÍDO' ? 'CONCLUIDO' : value;
-  }
-
-  return 'PENDENTE';
-}
-
-async function getDashboardForDate(date) {
-  const habitos = await all(
-    `
-    SELECT
-      h.id,
-      h.titulo,
-      h.subtitulo,
-      COALESCE(l.concluido, 0) AS concluido
-    FROM habitos h
-    LEFT JOIN habitos_log l
-      ON l.habito_id = h.id
-      AND l.data_registro = ?
-    ORDER BY h.id ASC
-  `,
-    [date]
-  );
-
-  const tarefas = await all(
-    `
-    SELECT id, titulo, prioridade, status, data_criacao
-    FROM tarefas
-    WHERE data_criacao = ?
-    ORDER BY
-      CASE prioridade
-        WHEN 'ALTA' THEN 1
-        WHEN 'MÉDIA' THEN 2
-        WHEN 'BAIXA' THEN 3
-        ELSE 4
-      END,
-      id DESC
-  `,
-    [date]
-  );
-
-  let mindset = await get(
-    `
-    SELECT id, data_registro, energia, foco, humor, COALESCE(notas, '') AS notas
-    FROM mindset
-    WHERE data_registro = ?
-  `,
-    [date]
-  );
-
-  if (!mindset) {
-    await run(
-      `
-      INSERT INTO mindset (data_registro, energia, foco, humor, notas)
-      VALUES (?, 2, 2, 2, '')
-    `,
-      [date]
-    );
-
-    mindset = await get(
-      `
-    SELECT id, data_registro, energia, foco, humor, COALESCE(notas, '') AS notas
-    FROM mindset
-      WHERE data_registro = ?
-    `,
-      [date]
-    );
-  }
-
-  const habitosConcluidos = habitos.filter(
-    (habit) => Number(habit.concluido) === 1
-  ).length;
-  const tarefasConcluidas = tarefas.filter(
-    (task) => task.status === 'CONCLUIDO'
-  ).length;
-
-  const totalItens = habitos.length + tarefas.length;
-  const totalConcluidos = habitosConcluidos + tarefasConcluidas;
-  const porcentagem =
-    totalItens === 0 ? 0 : Math.round((totalConcluidos / totalItens) * 100);
+function getMonthRange(monthValue) {
+  const [year, month] = monthValue.split('-').map(Number);
+  const start = `${year}-${String(month).padStart(2, '0')}-01`;
+  const last = new Date(year, month, 0);
+  const end = `${year}-${String(month).padStart(2, '0')}-${String(last.getDate()).padStart(2, '0')}`;
 
   return {
-    data: date,
-    habitos: await Promise.all(
-      habitos.map(async (habit) => ({
-        ...habit,
-        concluido: Number(habit.concluido) === 1,
-        streak: await calculateHabitStreak(habit.id, date),
-      }))
-    ),
-    tarefas,
-    mindset,
-    resumo: {
-      totalItens,
-      totalConcluidos,
-      restantes: Math.max(totalItens - totalConcluidos, 0),
-      habitosConcluidos,
-      tarefasConcluidas,
-      porcentagem,
-    },
+    year,
+    month,
+    monthValue,
+    start,
+    end,
+    totalDays: last.getDate()
   };
 }
 
-function toISODate(date) {
-  return date.toISOString().slice(0, 10);
+function getWeekdayIndexMondayFirst(dateISO) {
+  const date = new Date(`${dateISO}T00:00:00`);
+  const day = date.getDay();
+
+  return day === 0 ? 6 : day - 1;
 }
 
-function getLastNDays(days) {
-  const dates = [];
-  const today = new Date();
+function getMonthWeeks(monthValue) {
+  const { year, month, totalDays } = getMonthRange(monthValue);
+  const weeks = [];
+  let current = [];
 
-  for (let i = days - 1; i >= 0; i--) {
-    const date = new Date(today);
-    date.setDate(today.getDate() - i);
-    dates.push(toISODate(date));
-  }
+  for (let day = 1; day <= totalDays; day += 1) {
+    const date = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    const weekday = getWeekdayIndexMondayFirst(date);
 
-  return dates;
-}
-
-function isValidISODate(value) {
-  return /^\d{4}-\d{2}-\d{2}$/.test(String(value || ''));
-}
-
-function yamlSafe(value) {
-  return String(value ?? '')
-    .replaceAll('"', '\\"')
-    .replaceAll('\n', ' ')
-    .trim();
-}
-
-function markdownCheckLine(checked, text, extra = '') {
-  return `- [${checked ? 'x' : ' '}] ${text}${extra}`;
-}
-
-app.get('/api/exportar/:data', async (request, response) => {
-  try {
-    const { data } = request.params;
-
-    if (!isValidISODate(data)) {
-      return response.status(400).json({
-        error: 'Data inválida. Use o formato YYYY-MM-DD.',
-      });
+    if (day === 1) {
+      for (let i = 0; i < weekday; i += 1) current.push(null);
     }
 
-    const habitos = await all(
-      `
-      SELECT
-        h.id,
-        h.titulo,
-        h.subtitulo,
-        COALESCE(l.concluido, 0) AS concluido
-      FROM habitos h
-      LEFT JOIN habitos_log l
-        ON l.habito_id = h.id
-        AND l.data_registro = ?
-      ORDER BY h.id ASC
-      `,
-      [data]
-    );
+    current.push({
+      date,
+      day,
+      weekday
+    });
 
-    const tarefas = await all(
-      `
-      SELECT
-        id,
-        titulo,
-        prioridade,
-        status,
-        data_criacao
-      FROM tarefas
-      WHERE data_criacao = ?
-      ORDER BY
-        CASE prioridade
-          WHEN 'ALTA' THEN 1
-          WHEN 'MÉDIA' THEN 2
-          WHEN 'BAIXA' THEN 3
-          ELSE 4
-        END,
-        id ASC
-      `,
-      [data]
-    );
+    if (current.length === 7) {
+      weeks.push(current);
+      current = [];
+    }
+  }
 
-    const mindset = (await get(
-      `
-        SELECT
-          id,
-          data_registro,
-          energia,
-          foco,
-          humor,
-          COALESCE(notas, '') AS notas
-        FROM mindset
-        WHERE data_registro = ?
-        `,
-      [data]
-    )) || {
-      data_registro: data,
-      energia: 0,
-      foco: 0,
-      humor: 0,
-      notas: '',
+  if (current.length) {
+    while (current.length < 7) current.push(null);
+    weeks.push(current);
+  }
+
+  return weeks.map((days, index) => ({
+    index,
+    label: `Semana ${index + 1}`,
+    days
+  }));
+}
+
+function getWeekForDate(dateISO) {
+  const start = addDaysISO(dateISO, -getWeekdayIndexMondayFirst(dateISO));
+  const days = Array.from({ length: 7 }, (_, index) => {
+    const date = addDaysISO(start, index);
+    return {
+      date,
+      weekday: index,
+      day: Number(date.slice(-2))
     };
-
-    const habitosConcluidos = habitos.filter(
-      (habit) => Number(habit.concluido) === 1
-    ).length;
-
-    const tarefasConcluidas = tarefas.filter(
-      (task) => task.status === 'CONCLUIDO'
-    ).length;
-
-    const totalItens = habitos.length + tarefas.length;
-    const totalConcluidos = habitosConcluidos + tarefasConcluidas;
-
-    const porcentagem =
-      totalItens === 0 ? 0 : Math.round((totalConcluidos / totalItens) * 100);
-
-    const habitLines = habitos.length
-      ? habitos
-          .map((habit) =>
-            markdownCheckLine(Number(habit.concluido) === 1, habit.titulo)
-          )
-          .join('\n')
-      : '- Nenhum hábito cadastrado nesse dia.';
-
-    const taskLines = tarefas.length
-      ? tarefas
-          .map((task) => {
-            const priorityTag = task.prioridade
-              ? ` #${String(task.prioridade).toLowerCase()}`
-              : '';
-
-            return markdownCheckLine(
-              task.status === 'CONCLUIDO',
-              task.titulo,
-              priorityTag
-            );
-          })
-          .join('\n')
-      : '- Nenhuma tarefa cadastrada nesse dia.';
-
-    const journalText = String(mindset.notas || '').trim();
-
-    const markdown = `---
-type: quiet-progress-daily
-date: ${data}
-completion: ${porcentagem}
-completed_items: ${totalConcluidos}
-total_items: ${totalItens}
-completed_habits: ${habitosConcluidos}
-total_habits: ${habitos.length}
-completed_tasks: ${tarefasConcluidas}
-total_tasks: ${tarefas.length}
-energia: ${Number(mindset.energia || 0)}
-foco: ${Number(mindset.foco || 0)}
-humor: ${Number(mindset.humor || 0)}
-source: "Quiet Progress"
----
-
-# Quiet Progress — ${data}
-
-## Resumo
-
-- Progresso geral: **${porcentagem}%**
-- Itens concluídos: **${totalConcluidos}/${totalItens}**
-- Hábitos concluídos: **${habitosConcluidos}/${habitos.length}**
-- Tarefas concluídas: **${tarefasConcluidas}/${tarefas.length}**
-
-## Mindset
-
-- Energia: **${Number(mindset.energia || 0)}/3**
-- Foco: **${Number(mindset.foco || 0)}/3**
-- Humor: **${Number(mindset.humor || 0)}/3**
-
-## Hábitos
-
-${habitLines}
-
-## Tarefas
-
-${taskLines}
-
-## Journal
-
-${journalText || '_Sem journal registrado._'}
-`;
-
-    response.json({
-      ok: true,
-      data,
-      markdown,
-    });
-  } catch (error) {
-    console.error(error);
-    response.status(500).json({
-      error: 'Erro ao exportar Markdown retroativo.',
-    });
-  }
-});
-
-app.post(
-  '/api/sistema/restore',
-  upload.single('database'),
-  async (request, response) => {
-    const uploadedPath = request.file?.path;
-
-    try {
-      if (!request.file) {
-        return response.status(400).json({
-          error: 'Arquivo .db é obrigatório.',
-        });
-      }
-
-      if (!request.file.originalname.toLowerCase().endsWith('.db')) {
-        return response.status(400).json({
-          error: 'Arquivo inválido. Envie um backup .db.',
-        });
-      }
-
-      const backupBeforeRestore = `${DB_PATH}.before_restore_${Date.now()}.bak`;
-
-      await closeDatabase();
-
-      if (fs.existsSync(DB_PATH)) {
-        fs.copyFileSync(DB_PATH, backupBeforeRestore);
-      }
-
-      fs.copyFileSync(uploadedPath, DB_PATH);
-
-      connectDatabase();
-      await initDatabase();
-
-      response.json({
-        ok: true,
-        message: 'Banco restaurado com sucesso.',
-      });
-    } catch (error) {
-      console.error(error);
-
-      try {
-        connectDatabase();
-      } catch (reconnectError) {
-        console.error('[Restore] Falha ao reconectar:', reconnectError);
-      }
-
-      response.status(500).json({
-        error: 'Erro ao restaurar banco de dados.',
-        details: error.message,
-      });
-    } finally {
-      if (uploadedPath && fs.existsSync(uploadedPath)) {
-        fs.unlinkSync(uploadedPath);
-      }
-    }
-  }
-);
-
-app.patch('/api/tarefas/:id', async (request, response) => {
-  try {
-    const { id } = request.params;
-    const { titulo } = request.body;
-    const date = todayISO();
-
-    const tarefa = await get(
-      `
-      SELECT id, titulo, prioridade, status, data_criacao
-      FROM tarefas
-      WHERE id = ?
-      `,
-      [id]
-    );
-
-    if (!tarefa) {
-      return response.status(404).json({ error: 'Tarefa não encontrada.' });
-    }
-
-    if (!titulo || !String(titulo).trim()) {
-      return response.status(400).json({ error: 'titulo é obrigatório.' });
-    }
-
-    await run(
-      `
-      UPDATE tarefas
-      SET titulo = ?
-      WHERE id = ?
-      `,
-      [String(titulo).trim(), id]
-    );
-
-    const updated = await get(
-      `
-      SELECT id, titulo, prioridade, status, data_criacao
-      FROM tarefas
-      WHERE id = ?
-      `,
-      [id]
-    );
-
-    response.json({
-      ok: true,
-      tarefa: updated,
-      dashboard: await getDashboardForDate(date),
-    });
-  } catch (error) {
-    console.error(error);
-    response.status(500).json({ error: 'Erro ao editar tarefa.' });
-  }
-});
-
-app.patch('/api/habitos/:id', async (request, response) => {
-  try {
-    const { id } = request.params;
-    const { titulo, subtitulo } = request.body;
-    const date = todayISO();
-
-    const habito = await get(
-      `
-      SELECT id, titulo, subtitulo
-      FROM habitos
-      WHERE id = ?
-      `,
-      [id]
-    );
-
-    if (!habito) {
-      return response.status(404).json({ error: 'Hábito não encontrado.' });
-    }
-
-    const nextTitulo =
-      titulo && String(titulo).trim() ? String(titulo).trim() : habito.titulo;
-
-    const nextSubtitulo =
-      subtitulo && String(subtitulo).trim()
-        ? String(subtitulo).trim()
-        : habito.subtitulo;
-
-    await run(
-      `
-      UPDATE habitos
-      SET titulo = ?, subtitulo = ?
-      WHERE id = ?
-      `,
-      [nextTitulo, nextSubtitulo, id]
-    );
-
-    const updated = await get(
-      `
-      SELECT id, titulo, subtitulo
-      FROM habitos
-      WHERE id = ?
-      `,
-      [id]
-    );
-
-    response.json({
-      ok: true,
-      habito: updated,
-      dashboard: await getDashboardForDate(date),
-    });
-  } catch (error) {
-    console.error(error);
-
-    if (error.message && error.message.includes('UNIQUE')) {
-      return response.status(409).json({
-        error: 'Já existe um hábito com esse título.',
-      });
-    }
-
-    response.status(500).json({ error: 'Erro ao editar hábito.' });
-  }
-});
-
-app.get('/api/tarefas/historico', async (request, response) => {
-  try {
-    const date = todayISO();
-    const { page, limit, offset } = getPaginationParams(request, 20, 100);
-
-    const rows = await all(
-      `
-      SELECT id, titulo, prioridade, status, data_criacao
-      FROM tarefas
-      WHERE data_criacao != ?
-      ORDER BY data_criacao DESC, id DESC
-      LIMIT ? OFFSET ?
-      `,
-      [date, limit + 1, offset]
-    );
-
-    const hasMore = rows.length > limit;
-    const tarefas = hasMore ? rows.slice(0, limit) : rows;
-
-    response.json({
-      ok: true,
-      page,
-      limit,
-      hasMore,
-      nextPage: hasMore ? page + 1 : null,
-      tarefas,
-    });
-  } catch (error) {
-    console.error(error);
-    response.status(500).json({
-      error: 'Erro ao carregar histórico de tarefas.',
-    });
-  }
-});
-
-app.delete('/api/tarefas/:id', async (request, response) => {
-  try {
-    const { id } = request.params;
-
-    const tarefa = await get(
-      `
-      SELECT id, titulo, prioridade, status, data_criacao
-      FROM tarefas
-      WHERE id = ?
-      `,
-      [id]
-    );
-
-    if (!tarefa) {
-      return response.status(404).json({ error: 'Tarefa não encontrada.' });
-    }
-
-    await run(
-      `
-      DELETE FROM tarefas
-      WHERE id = ?
-      `,
-      [id]
-    );
-
-    response.json({
-      ok: true,
-      deletedId: Number(id),
-    });
-  } catch (error) {
-    console.error(error);
-    response.status(500).json({ error: 'Erro ao deletar tarefa.' });
-  }
-});
-
-app.get('/api/habitos/semana', async (request, response) => {
-  try {
-    const dates = getLast7Days();
-    const startDate = dates[0];
-    const endDate = dates[dates.length - 1];
-
-    const habitos = await all(`
-      SELECT id, titulo
-      FROM habitos
-      ORDER BY id ASC
-    `);
-
-    const logs = await all(
-      `
-      SELECT
-        habito_id,
-        data_registro,
-        concluido
-      FROM habitos_log
-      WHERE data_registro BETWEEN ? AND ?
-      `,
-      [startDate, endDate]
-    );
-
-    const logMap = new Map();
-
-    logs.forEach((log) => {
-      const key = `${log.habito_id}:${log.data_registro}`;
-      logMap.set(key, Number(log.concluido) === 1);
-    });
-
-    const weekly = habitos.map((habit) => ({
-      id: habit.id,
-      nome: habit.titulo,
-      datas: dates,
-      ultimos7Dias: dates.map((date) => {
-        const key = `${habit.id}:${date}`;
-        return logMap.get(key) === true;
-      }),
-    }));
-
-    response.json({
-      ok: true,
-      datas: dates,
-      habitos: weekly,
-    });
-  } catch (error) {
-    console.error(error);
-    response.status(500).json({
-      error: 'Erro ao carregar grid semanal de hábitos.',
-    });
-  }
-});
-
-app.post('/api/habitos', async (request, response) => {
-  try {
-    const { titulo, subtitulo } = request.body;
-    const date = todayISO();
-
-    if (!titulo || !String(titulo).trim()) {
-      return response.status(400).json({ error: 'titulo é obrigatório.' });
-    }
-
-    const cleanTitle = String(titulo).trim();
-    const cleanSubtitle =
-      subtitulo && String(subtitulo).trim()
-        ? String(subtitulo).trim()
-        : 'Hábito personalizado.';
-
-    const result = await run(
-      `
-      INSERT INTO habitos (titulo, subtitulo)
-      VALUES (?, ?)
-      `,
-      [cleanTitle, cleanSubtitle]
-    );
-
-    const habito = await get(
-      `
-      SELECT id, titulo, subtitulo
-      FROM habitos
-      WHERE id = ?
-      `,
-      [result.id]
-    );
-
-    response.status(201).json({
-      ok: true,
-      habito,
-      dashboard: await getDashboardForDate(date),
-    });
-  } catch (error) {
-    console.error(error);
-
-    if (error.message && error.message.includes('UNIQUE')) {
-      return response.status(409).json({
-        error: 'Já existe um hábito com esse título.',
-      });
-    }
-
-    response.status(500).json({ error: 'Erro ao criar hábito.' });
-  }
-});
-
-app.delete('/api/habitos/:id', async (request, response) => {
-  try {
-    const { id } = request.params;
-    const date = todayISO();
-
-    const habito = await get(
-      `
-      SELECT id, titulo
-      FROM habitos
-      WHERE id = ?
-      `,
-      [id]
-    );
-
-    if (!habito) {
-      return response.status(404).json({ error: 'Hábito não encontrado.' });
-    }
-
-    await run(
-      `
-      DELETE FROM habitos
-      WHERE id = ?
-      `,
-      [id]
-    );
-
-    response.json({
-      ok: true,
-      deletedId: Number(id),
-      dashboard: await getDashboardForDate(date),
-    });
-  } catch (error) {
-    console.error(error);
-    response.status(500).json({ error: 'Erro ao deletar hábito.' });
-  }
-});
-
-app.get('/api/mindset/historico', async (request, response) => {
-  try {
-    const { page, limit, offset } = getPaginationParams(request, 20, 100);
-
-    const rows = await all(
-      `
-      SELECT
-        id,
-        data_registro,
-        energia,
-        foco,
-        humor,
-        COALESCE(notas, '') AS notas
-      FROM mindset
-      WHERE notas IS NOT NULL
-        AND TRIM(notas) != ''
-      ORDER BY data_registro DESC
-      LIMIT ? OFFSET ?
-      `,
-      [limit + 1, offset]
-    );
-
-    const hasMore = rows.length > limit;
-    const registros = hasMore ? rows.slice(0, limit) : rows;
-
-    response.json({
-      ok: true,
-      page,
-      limit,
-      hasMore,
-      nextPage: hasMore ? page + 1 : null,
-      registros,
-    });
-  } catch (error) {
-    console.error(error);
-    response.status(500).json({
-      error: 'Erro ao carregar histórico de journals.',
-    });
-  }
-});
-
-app.get('/api/estatisticas', async (request, response) => {
-  try {
-    const heatmapDates = getLastNDays(35);
-    const mindsetDates = getLastNDays(30);
-
-    const heatmapStart = heatmapDates[0];
-    const heatmapEnd = heatmapDates[heatmapDates.length - 1];
-
-    const mindsetStart = mindsetDates[0];
-    const mindsetEnd = mindsetDates[mindsetDates.length - 1];
-
-    const totalHabitosRow = await get(`
-      SELECT COUNT(*) AS total
-      FROM habitos
-    `);
-
-    const totalHabitos = Number(totalHabitosRow?.total || 0);
-
-    const habitosConcluidosPorDia = await all(
-      `
-      SELECT
-        data_registro,
-        COUNT(*) AS total_concluido
-      FROM habitos_log
-      WHERE data_registro BETWEEN ? AND ?
-        AND concluido = 1
-      GROUP BY data_registro
-      `,
-      [heatmapStart, heatmapEnd]
-    );
-
-    const tarefasPorDia = await all(
-      `
-      SELECT
-        data_criacao,
-        COUNT(*) AS total_tarefas,
-        SUM(CASE WHEN status = 'CONCLUIDO' THEN 1 ELSE 0 END) AS total_concluido
-      FROM tarefas
-      WHERE data_criacao BETWEEN ? AND ?
-      GROUP BY data_criacao
-      `,
-      [heatmapStart, heatmapEnd]
-    );
-
-    const habitosMap = new Map(
-      habitosConcluidosPorDia.map((row) => [
-        row.data_registro,
-        Number(row.total_concluido || 0),
-      ])
-    );
-
-    const tarefasMap = new Map(
-      tarefasPorDia.map((row) => [
-        row.data_criacao,
-        {
-          totalTarefas: Number(row.total_tarefas || 0),
-          totalConcluido: Number(row.total_concluido || 0),
-        },
-      ])
-    );
-
-    const heatmap = heatmapDates.map((date) => {
-      const habitosConcluidos = habitosMap.get(date) || 0;
-      const tarefasData = tarefasMap.get(date) || {
-        totalTarefas: 0,
-        totalConcluido: 0,
-      };
-
-      const totalItens = totalHabitos + tarefasData.totalTarefas;
-      const totalConcluido = habitosConcluidos + tarefasData.totalConcluido;
-
-      const porcentagem =
-        totalItens === 0 ? 0 : Math.round((totalConcluido / totalItens) * 100);
-
-      return {
-        data: date,
-        totalItens,
-        totalConcluido,
-        porcentagem,
-      };
-    });
-
-    const mindset = await all(
-      `
-      SELECT
-        data_registro,
-        energia,
-        foco,
-        humor
-      FROM mindset
-      WHERE data_registro BETWEEN ? AND ?
-      ORDER BY data_registro ASC
-      `,
-      [mindsetStart, mindsetEnd]
-    );
-
-    const rankingHabitos = await all(`
-      SELECT
-        h.id,
-        h.titulo,
-        COUNT(l.id) AS total_registros,
-        SUM(CASE WHEN l.concluido = 1 THEN 1 ELSE 0 END) AS total_concluido,
-        CASE
-          WHEN COUNT(l.id) = 0 THEN 0
-          ELSE ROUND(
-            (SUM(CASE WHEN l.concluido = 1 THEN 1 ELSE 0 END) * 100.0) / COUNT(l.id)
-          )
-        END AS porcentagem
-      FROM habitos h
-      LEFT JOIN habitos_log l
-        ON l.habito_id = h.id
-      GROUP BY h.id, h.titulo
-      ORDER BY porcentagem DESC, h.id ASC
-    `);
-
-    response.json({
-      heatmap,
-      mindset,
-      rankingHabitos: rankingHabitos.map((habit) => ({
-        id: habit.id,
-        titulo: habit.titulo,
-        totalRegistros: Number(habit.total_registros || 0),
-        totalConcluido: Number(habit.total_concluido || 0),
-        porcentagem: Number(habit.porcentagem || 0),
-      })),
-    });
-  } catch (error) {
-    console.error(error);
-    response.status(500).json({
-      error: 'Erro ao carregar estatísticas.',
-    });
-  }
-});
-
-app.get('/api/backup', (request, response) => {
-  const dbPath = path.join(__dirname, '..', 'quiet_progress.db');
-  const filename = `quiet_progress_backup_${todayISO()}.db`;
-
-  response.download(dbPath, filename, (error) => {
-    if (error) {
-      console.error(error);
-
-      if (!response.headersSent) {
-        response.status(500).json({
-          error: 'Erro ao gerar backup do banco.',
-        });
-      }
-    }
   });
-});
 
-app.get('/api/health', (request, response) => {
-  response.json({ ok: true, service: 'quiet-progress-api', date: todayISO() });
-});
-
-app.get('/api/dashboard/hoje', async (request, response) => {
-  try {
-    const dashboard = await getDashboardForDate(todayISO());
-    response.json(dashboard);
-  } catch (error) {
-    console.error(error);
-    response.status(500).json({ error: 'Erro ao carregar dashboard de hoje.' });
-  }
-});
-
-app.post('/api/habitos/toggle', async (request, response) => {
-  try {
-    const { habito_id } = request.body;
-    const date = todayISO();
-
-    if (!habito_id) {
-      return response.status(400).json({ error: 'habito_id é obrigatório.' });
-    }
-
-    const habit = await get(`SELECT id FROM habitos WHERE id = ?`, [habito_id]);
-
-    if (!habit) {
-      return response.status(404).json({ error: 'Hábito não encontrado.' });
-    }
-
-    const existingLog = await get(
-      `
-      SELECT id, concluido
-      FROM habitos_log
-      WHERE habito_id = ? AND data_registro = ?
-    `,
-      [habito_id, date]
-    );
-
-    let novoStatus = 1;
-
-    if (existingLog) {
-      novoStatus = existingLog.concluido === 1 ? 0 : 1;
-
-      await run(
-        `
-        UPDATE habitos_log
-        SET concluido = ?
-        WHERE id = ?
-      `,
-        [novoStatus, existingLog.id]
-      );
-    } else {
-      await run(
-        `
-        INSERT INTO habitos_log (habito_id, data_registro, concluido)
-        VALUES (?, ?, 1)
-      `,
-        [habito_id, date]
-      );
-    }
-
-    response.json({
-      ok: true,
-      habito_id: Number(habito_id),
-      data_registro: date,
-      concluido: novoStatus === 1,
-      dashboard: await getDashboardForDate(date),
-    });
-  } catch (error) {
-    console.error(error);
-    response.status(500).json({ error: 'Erro ao alternar hábito.' });
-  }
-});
-
-app.get('/api/tarefas', async (request, response) => {
-  try {
-    const date = request.query.data || todayISO();
-
-    const tarefas = await all(
-      `
-      SELECT id, titulo, prioridade, status, data_criacao
-      FROM tarefas
-      WHERE data_criacao = ?
-      ORDER BY id DESC
-    `,
-      [date]
-    );
-
-    response.json({ data: date, tarefas });
-  } catch (error) {
-    console.error(error);
-    response.status(500).json({ error: 'Erro ao listar tarefas.' });
-  }
-});
-
-app.post('/api/tarefas', async (request, response) => {
-  try {
-    const { titulo, prioridade } = request.body;
-    const date = todayISO();
-
-    if (!titulo || !String(titulo).trim()) {
-      return response.status(400).json({ error: 'titulo é obrigatório.' });
-    }
-
-    const result = await run(
-      `
-      INSERT INTO tarefas (titulo, prioridade, status, data_criacao)
-      VALUES (?, ?, 'PENDENTE', ?)
-    `,
-      [String(titulo).trim(), normalizePriority(prioridade), date]
-    );
-
-    const tarefa = await get(
-      `
-      SELECT id, titulo, prioridade, status, data_criacao
-      FROM tarefas
-      WHERE id = ?
-    `,
-      [result.id]
-    );
-
-    response.status(201).json({
-      ok: true,
-      tarefa,
-      dashboard: await getDashboardForDate(date),
-    });
-  } catch (error) {
-    console.error(error);
-    response.status(500).json({ error: 'Erro ao cadastrar tarefa.' });
-  }
-});
-
-app.put('/api/tarefas/:id', async (request, response) => {
-  try {
-    const { id } = request.params;
-    const { status, action } = request.body;
-    const date = todayISO();
-
-    const tarefa = await get(`SELECT * FROM tarefas WHERE id = ?`, [id]);
-
-    if (!tarefa) {
-      return response.status(404).json({ error: 'Tarefa não encontrada.' });
-    }
-
-    let newStatus;
-
-    if (action === 'toggle' || !status) {
-      newStatus = tarefa.status === 'CONCLUIDO' ? 'PENDENTE' : 'CONCLUIDO';
-    } else if (String(status).toUpperCase() === 'START') {
-      newStatus = 'PENDENTE';
-    } else {
-      newStatus = normalizeStatus(status);
-    }
-
-    await run(
-      `
-      UPDATE tarefas
-      SET status = ?
-      WHERE id = ?
-    `,
-      [newStatus, id]
-    );
-
-    const updated = await get(
-      `
-      SELECT id, titulo, prioridade, status, data_criacao
-      FROM tarefas
-      WHERE id = ?
-    `,
-      [id]
-    );
-
-    response.json({
-      ok: true,
-      tarefa: updated,
-      dashboard: await getDashboardForDate(date),
-    });
-  } catch (error) {
-    console.error(error);
-    response.status(500).json({ error: 'Erro ao atualizar tarefa.' });
-  }
-});
-
-app.post('/api/mindset', async (request, response) => {
-  try {
-    const date = todayISO();
-    const energia = Number(request.body.energia);
-    const foco = Number(request.body.foco);
-    const humor = Number(request.body.humor);
-    const notas = request.body.notas ? String(request.body.notas).trim() : '';
-
-    const values = { energia, foco, humor };
-
-    for (const [key, value] of Object.entries(values)) {
-      if (!Number.isInteger(value) || value < 1 || value > 3) {
-        return response.status(400).json({
-          error: `${key} precisa ser um número inteiro entre 1 e 3.`,
-        });
-      }
-    }
-
-    await run(
-      `
-      INSERT INTO mindset (data_registro, energia, foco, humor, notas)
-      VALUES (?, ?, ?, ?, ?)
-      ON CONFLICT(data_registro)
-      DO UPDATE SET
-        energia = excluded.energia,
-        foco = excluded.foco,
-        humor = excluded.humor,
-        notas = excluded.notas
-      `,
-      [date, energia, foco, humor, notas]
-    );
-
-    const mindset = await get(
-      `
-      SELECT id, data_registro, energia, foco, humor, COALESCE(notas, '') AS notas
-      FROM mindset
-      WHERE data_registro = ?
-      `,
-      [date]
-    );
-
-    response.json({
-      ok: true,
-      mindset,
-      dashboard: await getDashboardForDate(date),
-    });
-  } catch (error) {
-    console.error(error);
-    response.status(500).json({ error: 'Erro ao salvar mindset.' });
-  }
-});
-
-app.get('*', (request, response) => {
-  response.sendFile(path.join(__dirname, '..', 'public', 'index.html'));
-});
+  return {
+    start,
+    end: days[6].date,
+    days
+  };
+}
 
 function getLocalNetworkUrls(port) {
   const interfaces = os.networkInterfaces();
   const urls = [];
 
-  Object.values(interfaces).forEach((netInterface) => {
-    netInterface.forEach((details) => {
-      const isIPv4 = details.family === 'IPv4';
-      const isInternal = details.internal;
-
-      if (isIPv4 && !isInternal) {
+  Object.values(interfaces).forEach((networkInterface) => {
+    networkInterface.forEach((details) => {
+      if (details.family === 'IPv4' && !details.internal) {
         urls.push(`http://${details.address}:${port}`);
       }
     });
@@ -1255,22 +189,1016 @@ function getLocalNetworkUrls(port) {
   return urls;
 }
 
+function dateIsWithinHabit(habit, date) {
+  if (habit.data_inicio && date < habit.data_inicio) return false;
+  if (habit.data_fim && date > habit.data_fim) return false;
+  return true;
+}
+
+async function getHabitsForRange(start, end, includeInactiveWithLogs = true) {
+  if (includeInactiveWithLogs) {
+    return all(
+      `
+      SELECT DISTINCT h.*
+      FROM habitos h
+      LEFT JOIN habitos_log l
+        ON l.habito_id = h.id
+        AND l.data_ref BETWEEN ? AND ?
+      WHERE h.ativo = 1
+         OR l.id IS NOT NULL
+      ORDER BY h.ordem ASC, h.id ASC
+      `,
+      [start, end]
+    );
+  }
+
+  return all(
+    `
+    SELECT *
+    FROM habitos
+    WHERE ativo = 1
+    ORDER BY ordem ASC, id ASC
+    `
+  );
+}
+
+async function getActiveHabitsForDate(date) {
+  const habits = await all(
+    `
+    SELECT *
+    FROM habitos
+    WHERE ativo = 1
+      AND (data_inicio IS NULL OR data_inicio <= ?)
+      AND (data_fim IS NULL OR data_fim >= ?)
+    ORDER BY ordem ASC, id ASC
+    `,
+    [date, date]
+  );
+
+  return habits;
+}
+
+async function getMindsetForDate(date) {
+  let mindset = await get(
+    `
+    SELECT *
+    FROM mindset
+    WHERE data_ref = ?
+    `,
+    [date]
+  );
+
+  if (!mindset) {
+    const now = nowISO();
+
+    await run(
+      `
+      INSERT INTO mindset (data_ref, energia, foco, motivacao, humor, notas, created_at, updated_at)
+      VALUES (?, 2, 2, 2, 2, '', ?, ?)
+      `,
+      [date, now, now]
+    );
+
+    mindset = await get(`SELECT * FROM mindset WHERE data_ref = ?`, [date]);
+  }
+
+  return normalizeMindset(mindset);
+}
+
+function normalizeMindset(row) {
+  return {
+    id: row.id,
+    data_ref: row.data_ref,
+    energia: Number(row.energia || 2),
+    foco: Number(row.foco || 2),
+    motivacao: Number(row.motivacao || 2),
+    humor: Number(row.humor || 2),
+    notas: row.notas || '',
+    created_at: row.created_at,
+    updated_at: row.updated_at
+  };
+}
+
+function normalizeTask(row) {
+  return {
+    id: row.id,
+    titulo: row.titulo,
+    descricao: row.descricao || '',
+    prioridade: row.prioridade || 'MÉDIA',
+    status: row.status || 'PENDENTE',
+    data_ref: row.data_ref,
+    tipo: row.tipo || 'task',
+    ativo: Number(row.ativo) === 1,
+    ordem: Number(row.ordem || 0),
+    created_at: row.created_at,
+    updated_at: row.updated_at
+  };
+}
+
+function calcPercent(done, total) {
+  return total === 0 ? 0 : Math.round((done / total) * 100);
+}
+
+async function getDayPayload(date, options = {}) {
+  const includeInactiveWithLogs = Boolean(options.includeInactiveWithLogs);
+  const allHabits = includeInactiveWithLogs
+    ? await getHabitsForRange(date, date, true)
+    : await getActiveHabitsForDate(date);
+
+  const logs = await all(
+    `
+    SELECT habito_id, concluido
+    FROM habitos_log
+    WHERE data_ref = ?
+    `,
+    [date]
+  );
+
+  const logMap = new Map(logs.map((row) => [Number(row.habito_id), Number(row.concluido) === 1]));
+
+  const habits = allHabits
+    .filter((habit) => includeInactiveWithLogs || dateIsWithinHabit(habit, date))
+    .map((habit) => ({
+      id: habit.id,
+      titulo: habit.titulo,
+      subtitulo: habit.subtitulo || '',
+      ativo: Number(habit.ativo) === 1,
+      cor: habit.cor,
+      ordem: Number(habit.ordem || 0),
+      data_inicio: habit.data_inicio,
+      data_fim: habit.data_fim,
+      disabledForDate: !dateIsWithinHabit(habit, date),
+      concluido: logMap.get(Number(habit.id)) === true
+    }));
+
+  const tasks = (
+    await all(
+      `
+      SELECT *
+      FROM tarefas
+      WHERE data_ref = ?
+        AND ativo = 1
+      ORDER BY ordem ASC, id ASC
+      `,
+      [date]
+    )
+  ).map(normalizeTask);
+
+  const mindset = await getMindsetForDate(date);
+
+  const habitsDone = habits.filter((habit) => habit.concluido).length;
+  const tasksDone = tasks.filter((task) => task.status === 'CONCLUIDO').length;
+
+  const habitsPercent = calcPercent(habitsDone, habits.length);
+  const tasksPercent = calcPercent(tasksDone, tasks.length);
+  const totalItems = habits.length + tasks.length;
+  const totalDone = habitsDone + tasksDone;
+
+  return {
+    date,
+    habits,
+    tasks,
+    mindset,
+    progress: {
+      habitsDone,
+      habitsTotal: habits.length,
+      habitsPercent,
+      tasksDone,
+      tasksTotal: tasks.length,
+      tasksPercent,
+      totalDone,
+      totalItems,
+      totalPercent: calcPercent(totalDone, totalItems)
+    }
+  };
+}
+
+async function getDashboardMonth(monthValue) {
+  const range = getMonthRange(monthValue);
+  const weeks = getMonthWeeks(monthValue);
+  const today = todayISO();
+  const habits = await getHabitsForRange(range.start, range.end, true);
+
+  const habitLogs = await all(
+    `
+    SELECT habito_id, data_ref, concluido
+    FROM habitos_log
+    WHERE data_ref BETWEEN ? AND ?
+    `,
+    [range.start, range.end]
+  );
+
+  const tasks = (await all(
+    `
+    SELECT *
+    FROM tarefas
+    WHERE data_ref BETWEEN ? AND ?
+      AND ativo = 1
+    ORDER BY data_ref ASC, ordem ASC, id ASC
+    `,
+    [range.start, range.end]
+  )).map(normalizeTask);
+
+  const mindsets = (await all(
+    `
+    SELECT *
+    FROM mindset
+    WHERE data_ref BETWEEN ? AND ?
+    ORDER BY data_ref ASC
+    `,
+    [range.start, range.end]
+  )).map(normalizeMindset);
+
+  const logMap = {};
+  const habitStats = {};
+  const days = {};
+
+  habits.forEach((habit) => {
+    habitStats[habit.id] = {
+      habit_id: habit.id,
+      titulo: habit.titulo,
+      cor: habit.cor,
+      possibleDays: 0,
+      doneDays: 0,
+      percent: 0
+    };
+  });
+
+  for (let day = 1; day <= range.totalDays; day += 1) {
+    const date = `${range.monthValue}-${String(day).padStart(2, '0')}`;
+    days[date] = {
+      date,
+      day,
+      today: date === today,
+      future: date > today,
+      past: date < today,
+      habitDone: 0,
+      habitTotal: 0,
+      taskDone: 0,
+      taskTotal: 0,
+      totalDone: 0,
+      totalItems: 0,
+      percent: 0,
+      hasNote: false
+    };
+  }
+
+  habitLogs.forEach((log) => {
+    const key = `${log.habito_id}:${log.data_ref}`;
+    logMap[key] = Number(log.concluido) === 1;
+  });
+
+  Object.keys(days).forEach((date) => {
+    habits.forEach((habit) => {
+      const visibleForDate = Number(habit.ativo) === 1 && dateIsWithinHabit(habit, date);
+      const hasHistoricalLog = logMap[`${habit.id}:${date}`] !== undefined;
+
+      if (visibleForDate || hasHistoricalLog) {
+        days[date].habitTotal += 1;
+        habitStats[habit.id].possibleDays += 1;
+
+        if (logMap[`${habit.id}:${date}`] === true) {
+          days[date].habitDone += 1;
+          habitStats[habit.id].doneDays += 1;
+        }
+      }
+    });
+  });
+
+  const tasksByDate = {};
+  tasks.forEach((task) => {
+    if (!tasksByDate[task.data_ref]) tasksByDate[task.data_ref] = [];
+    tasksByDate[task.data_ref].push(task);
+
+    if (days[task.data_ref]) {
+      days[task.data_ref].taskTotal += 1;
+      if (task.status === 'CONCLUIDO') days[task.data_ref].taskDone += 1;
+    }
+  });
+
+  const mindsetByDate = {};
+  mindsets.forEach((mindset) => {
+    mindsetByDate[mindset.data_ref] = mindset;
+    if (days[mindset.data_ref]) {
+      days[mindset.data_ref].hasNote = Boolean(String(mindset.notas || '').trim());
+    }
+  });
+
+  Object.keys(days).forEach((date) => {
+    const day = days[date];
+    day.totalDone = day.habitDone + day.taskDone;
+    day.totalItems = day.habitTotal + day.taskTotal;
+    day.percent = calcPercent(day.totalDone, day.totalItems);
+    day.habitPercent = calcPercent(day.habitDone, day.habitTotal);
+    day.taskPercent = calcPercent(day.taskDone, day.taskTotal);
+  });
+
+  Object.values(habitStats).forEach((item) => {
+    item.percent = calcPercent(item.doneDays, item.possibleDays);
+  });
+
+  const weekStats = weeks.map((week) => {
+    let totalDone = 0;
+    let totalItems = 0;
+
+    week.days.forEach((day) => {
+      if (!day) return;
+      const summary = days[day.date];
+      totalDone += summary.totalDone;
+      totalItems += summary.totalItems;
+    });
+
+    return {
+      index: week.index,
+      label: week.label,
+      totalDone,
+      totalItems,
+      percent: calcPercent(totalDone, totalItems)
+    };
+  });
+
+  const monthDone = Object.values(days).reduce((sum, day) => sum + day.totalDone, 0);
+  const monthItems = Object.values(days).reduce((sum, day) => sum + day.totalItems, 0);
+
+  return {
+    month: range.monthValue,
+    range,
+    today,
+    weeks,
+    habits: habits.map((habit) => ({
+      id: habit.id,
+      titulo: habit.titulo,
+      subtitulo: habit.subtitulo || '',
+      ativo: Number(habit.ativo) === 1,
+      cor: habit.cor,
+      ordem: Number(habit.ordem || 0),
+      data_inicio: habit.data_inicio,
+      data_fim: habit.data_fim
+    })),
+    logMap,
+    tasksByDate,
+    mindsetByDate,
+    days,
+    stats: {
+      monthDone,
+      monthItems,
+      monthPercent: calcPercent(monthDone, monthItems),
+      weekStats,
+      habitStats: Object.values(habitStats)
+    }
+  };
+}
+
+async function getStatsMonth(monthValue) {
+  const dashboard = await getDashboardMonth(monthValue);
+  const range = dashboard.range;
+  const dates = Object.keys(dashboard.days).sort();
+
+  const tasksDoneSeries = dates.map((date) => ({
+    date,
+    total: dashboard.days[date].taskDone
+  }));
+
+  const dayProgressSeries = dates.map((date) => ({
+    date,
+    percent: dashboard.days[date].percent
+  }));
+
+  const mindsetSeries = dates.map((date) => {
+    const mindset = dashboard.mindsetByDate[date];
+
+    return {
+      date,
+      energia: mindset ? Number(mindset.energia) : null,
+      foco: mindset ? Number(mindset.foco) : null,
+      motivacao: mindset ? Number(mindset.motivacao) : null,
+      humor: mindset ? Number(mindset.humor) : null
+    };
+  });
+
+  const priorityRows = await all(
+    `
+    SELECT
+      prioridade,
+      COUNT(*) AS total,
+      SUM(CASE WHEN status = 'CONCLUIDO' THEN 1 ELSE 0 END) AS done
+    FROM tarefas
+    WHERE data_ref BETWEEN ? AND ?
+      AND ativo = 1
+    GROUP BY prioridade
+    `,
+    [range.start, range.end]
+  );
+
+  const priorityStats = priorityRows.map((row) => ({
+    prioridade: row.prioridade || 'MÉDIA',
+    total: Number(row.total || 0),
+    done: Number(row.done || 0),
+    percent: calcPercent(Number(row.done || 0), Number(row.total || 0))
+  }));
+
+  const validMindsets = mindsetSeries.filter((item) => item.energia !== null);
+  const avg = (key) => {
+    if (!validMindsets.length) return 0;
+    const value = validMindsets.reduce((sum, item) => sum + Number(item[key] || 0), 0) / validMindsets.length;
+    return Math.round(value * 10) / 10;
+  };
+
+  return {
+    month: monthValue,
+    monthSummary: dashboard.stats,
+    dayProgressSeries,
+    tasksDoneSeries,
+    habitStats: dashboard.stats.habitStats,
+    weekStats: dashboard.stats.weekStats,
+    priorityStats,
+    mindsetSeries,
+    mindsetAverage: {
+      energia: avg('energia'),
+      foco: avg('foco'),
+      motivacao: avg('motivacao'),
+      humor: avg('humor')
+    }
+  };
+}
+
+function markdownTaskLine(task) {
+  return `- [${task.status === 'CONCLUIDO' ? 'x' : ' '}] ${task.titulo}${task.prioridade ? ` #${String(task.prioridade).toLowerCase()}` : ''}`;
+}
+
+function markdownHabitLine(habit) {
+  return `- [${habit.concluido ? 'x' : ' '}] ${habit.titulo}`;
+}
+
+async function buildDayMarkdown(date) {
+  const day = await getDayPayload(date, { includeInactiveWithLogs: true });
+
+  return `# Daily Check-in — ${date}
+
+## Mindset
+- Energy: ${day.mindset.energia}/5
+- Focus: ${day.mindset.foco}/5
+- Motivation: ${day.mindset.motivacao}/5
+- Mood: ${day.mindset.humor}/5
+
+## Hábitos
+${day.habits.length ? day.habits.map(markdownHabitLine).join('\n') : '- Nenhum hábito registrado.'}
+
+## Tarefas
+${day.tasks.length ? day.tasks.map(markdownTaskLine).join('\n') : '- Nenhuma tarefa registrada.'}
+
+## Progresso
+- Hábitos: ${day.progress.habitsPercent}%
+- Tarefas: ${day.progress.tasksPercent}%
+- Geral: ${day.progress.totalPercent}%
+
+## Nota do dia
+${day.mindset.notas ? day.mindset.notas : '_Sem nota registrada._'}
+`;
+}
+
+app.get('/api/health', (request, response) => {
+  const memory = process.memoryUsage();
+
+  response.json({
+    status: 'ok',
+    uptime: Math.round(process.uptime()),
+    node: process.version,
+    platform: process.platform,
+    arch: process.arch,
+    databasePath: DB_PATH,
+    databaseExists: databaseExists(),
+    today: todayISO(),
+    memory: {
+      rss: memory.rss,
+      heapTotal: memory.heapTotal,
+      heapUsed: memory.heapUsed,
+      external: memory.external
+    }
+  });
+});
+
+app.get('/api/dashboard', async (request, response) => {
+  try {
+    const month = normalizeMonth(request.query.month);
+    response.json(await getDashboardMonth(month));
+  } catch (error) {
+    console.error(error);
+    response.status(500).json({ error: 'Erro ao carregar dashboard mensal.' });
+  }
+});
+
+app.get('/api/day/:date', async (request, response) => {
+  try {
+    const date = normalizeDate(request.params.date);
+    response.json(await getDayPayload(date));
+  } catch (error) {
+    console.error(error);
+    response.status(500).json({ error: 'Erro ao carregar dia.' });
+  }
+});
+
+app.get('/api/stats', async (request, response) => {
+  try {
+    const month = normalizeMonth(request.query.month);
+    response.json(await getStatsMonth(month));
+  } catch (error) {
+    console.error(error);
+    response.status(500).json({ error: 'Erro ao carregar estatísticas.' });
+  }
+});
+
+app.post('/api/habits', async (request, response) => {
+  try {
+    const now = nowISO();
+    const titulo = String(request.body.titulo || '').trim();
+
+    if (!titulo) {
+      return response.status(400).json({ error: 'titulo é obrigatório.' });
+    }
+
+    const result = await run(
+      `
+      INSERT INTO habitos (titulo, subtitulo, ativo, cor, ordem, data_inicio, data_fim, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+      [
+        titulo,
+        String(request.body.subtitulo || '').trim(),
+        request.body.ativo === false ? 0 : 1,
+        request.body.cor ? String(request.body.cor).trim() : null,
+        clampNumber(request.body.ordem, 0, 9999, 0),
+        isValidISODate(request.body.data_inicio) ? request.body.data_inicio : null,
+        isValidISODate(request.body.data_fim) ? request.body.data_fim : null,
+        now,
+        now
+      ]
+    );
+
+    const habit = await get(`SELECT * FROM habitos WHERE id = ?`, [result.id]);
+
+    response.status(201).json({
+      ok: true,
+      habit
+    });
+  } catch (error) {
+    console.error(error);
+    response.status(500).json({ error: 'Erro ao criar hábito.' });
+  }
+});
+
+app.patch('/api/habits/:id', async (request, response) => {
+  try {
+    const current = await get(`SELECT * FROM habitos WHERE id = ?`, [request.params.id]);
+
+    if (!current) {
+      return response.status(404).json({ error: 'Hábito não encontrado.' });
+    }
+
+    const next = {
+      titulo: request.body.titulo !== undefined && String(request.body.titulo).trim() ? String(request.body.titulo).trim() : current.titulo,
+      subtitulo: request.body.subtitulo !== undefined ? String(request.body.subtitulo || '').trim() : current.subtitulo,
+      ativo: request.body.ativo !== undefined ? Number(Boolean(request.body.ativo)) : Number(current.ativo),
+      cor: request.body.cor !== undefined ? (request.body.cor ? String(request.body.cor).trim() : null) : current.cor,
+      ordem: request.body.ordem !== undefined ? clampNumber(request.body.ordem, 0, 9999, Number(current.ordem || 0)) : Number(current.ordem || 0),
+      data_inicio: request.body.data_inicio !== undefined ? (isValidISODate(request.body.data_inicio) ? request.body.data_inicio : null) : current.data_inicio,
+      data_fim: request.body.data_fim !== undefined ? (isValidISODate(request.body.data_fim) ? request.body.data_fim : null) : current.data_fim
+    };
+
+    await run(
+      `
+      UPDATE habitos
+      SET titulo = ?, subtitulo = ?, ativo = ?, cor = ?, ordem = ?, data_inicio = ?, data_fim = ?, updated_at = ?
+      WHERE id = ?
+      `,
+      [
+        next.titulo,
+        next.subtitulo,
+        next.ativo,
+        next.cor,
+        next.ordem,
+        next.data_inicio,
+        next.data_fim,
+        nowISO(),
+        request.params.id
+      ]
+    );
+
+    const habit = await get(`SELECT * FROM habitos WHERE id = ?`, [request.params.id]);
+
+    response.json({
+      ok: true,
+      habit
+    });
+  } catch (error) {
+    console.error(error);
+    response.status(500).json({ error: 'Erro ao editar hábito.' });
+  }
+});
+
+app.delete('/api/habits/:id', async (request, response) => {
+  try {
+    const current = await get(`SELECT * FROM habitos WHERE id = ?`, [request.params.id]);
+
+    if (!current) {
+      return response.status(404).json({ error: 'Hábito não encontrado.' });
+    }
+
+    await run(
+      `
+      UPDATE habitos
+      SET ativo = 0, updated_at = ?
+      WHERE id = ?
+      `,
+      [nowISO(), request.params.id]
+    );
+
+    response.json({
+      ok: true,
+      deletedId: Number(request.params.id)
+    });
+  } catch (error) {
+    console.error(error);
+    response.status(500).json({ error: 'Erro ao excluir hábito.' });
+  }
+});
+
+app.put('/api/habits/:id/log', async (request, response) => {
+  try {
+    const habit = await get(`SELECT * FROM habitos WHERE id = ?`, [request.params.id]);
+
+    if (!habit) {
+      return response.status(404).json({ error: 'Hábito não encontrado.' });
+    }
+
+    const date = normalizeDate(request.body.data_ref);
+    const concluido = request.body.concluido ? 1 : 0;
+    const now = nowISO();
+
+    await run(
+      `
+      INSERT INTO habitos_log (habito_id, data_ref, concluido, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(habito_id, data_ref)
+      DO UPDATE SET
+        concluido = excluded.concluido,
+        updated_at = excluded.updated_at
+      `,
+      [request.params.id, date, concluido, now, now]
+    );
+
+    response.json({
+      ok: true,
+      habitId: Number(request.params.id),
+      data_ref: date,
+      concluido: Boolean(concluido)
+    });
+  } catch (error) {
+    console.error(error);
+    response.status(500).json({ error: 'Erro ao salvar log do hábito.' });
+  }
+});
+
+app.post('/api/tasks', async (request, response) => {
+  try {
+    const titulo = String(request.body.titulo || '').trim();
+
+    if (!titulo) {
+      return response.status(400).json({ error: 'titulo é obrigatório.' });
+    }
+
+    const now = nowISO();
+    const dataRef = normalizeDate(request.body.data_ref);
+
+    const result = await run(
+      `
+      INSERT INTO tarefas (titulo, descricao, prioridade, status, data_ref, tipo, ativo, ordem, created_at, updated_at)
+      VALUES (?, ?, ?, 'PENDENTE', ?, ?, 1, ?, ?, ?)
+      `,
+      [
+        titulo,
+        String(request.body.descricao || '').trim(),
+        sanitizePriority(request.body.prioridade),
+        dataRef,
+        String(request.body.tipo || 'task').trim() || 'task',
+        clampNumber(request.body.ordem, 0, 9999, 0),
+        now,
+        now
+      ]
+    );
+
+    response.status(201).json({
+      ok: true,
+      task: normalizeTask(await get(`SELECT * FROM tarefas WHERE id = ?`, [result.id]))
+    });
+  } catch (error) {
+    console.error(error);
+    response.status(500).json({ error: 'Erro ao criar tarefa.' });
+  }
+});
+
+app.patch('/api/tasks/:id', async (request, response) => {
+  try {
+    const current = await get(`SELECT * FROM tarefas WHERE id = ?`, [request.params.id]);
+
+    if (!current || Number(current.ativo) !== 1) {
+      return response.status(404).json({ error: 'Tarefa não encontrada.' });
+    }
+
+    const next = {
+      titulo: request.body.titulo !== undefined && String(request.body.titulo).trim() ? String(request.body.titulo).trim() : current.titulo,
+      descricao: request.body.descricao !== undefined ? String(request.body.descricao || '').trim() : current.descricao,
+      prioridade: request.body.prioridade !== undefined ? sanitizePriority(request.body.prioridade) : current.prioridade,
+      status: request.body.status !== undefined ? sanitizeStatus(request.body.status) : current.status,
+      data_ref: request.body.data_ref !== undefined ? normalizeDate(request.body.data_ref) : current.data_ref,
+      ordem: request.body.ordem !== undefined ? clampNumber(request.body.ordem, 0, 9999, Number(current.ordem || 0)) : Number(current.ordem || 0)
+    };
+
+    await run(
+      `
+      UPDATE tarefas
+      SET titulo = ?, descricao = ?, prioridade = ?, status = ?, data_ref = ?, ordem = ?, updated_at = ?
+      WHERE id = ?
+      `,
+      [
+        next.titulo,
+        next.descricao,
+        next.prioridade,
+        next.status,
+        next.data_ref,
+        next.ordem,
+        nowISO(),
+        request.params.id
+      ]
+    );
+
+    response.json({
+      ok: true,
+      task: normalizeTask(await get(`SELECT * FROM tarefas WHERE id = ?`, [request.params.id]))
+    });
+  } catch (error) {
+    console.error(error);
+    response.status(500).json({ error: 'Erro ao editar tarefa.' });
+  }
+});
+
+app.delete('/api/tasks/:id', async (request, response) => {
+  try {
+    const current = await get(`SELECT * FROM tarefas WHERE id = ?`, [request.params.id]);
+
+    if (!current || Number(current.ativo) !== 1) {
+      return response.status(404).json({ error: 'Tarefa não encontrada.' });
+    }
+
+    await run(
+      `
+      UPDATE tarefas
+      SET ativo = 0, updated_at = ?
+      WHERE id = ?
+      `,
+      [nowISO(), request.params.id]
+    );
+
+    response.json({
+      ok: true,
+      deletedId: Number(request.params.id)
+    });
+  } catch (error) {
+    console.error(error);
+    response.status(500).json({ error: 'Erro ao excluir tarefa.' });
+  }
+});
+
+app.put('/api/tasks/:id/status', async (request, response) => {
+  try {
+    const status = sanitizeStatus(request.body.status);
+
+    const current = await get(`SELECT * FROM tarefas WHERE id = ? AND ativo = 1`, [request.params.id]);
+
+    if (!current) {
+      return response.status(404).json({ error: 'Tarefa não encontrada.' });
+    }
+
+    await run(
+      `
+      UPDATE tarefas
+      SET status = ?, updated_at = ?
+      WHERE id = ?
+      `,
+      [status, nowISO(), request.params.id]
+    );
+
+    response.json({
+      ok: true,
+      task: normalizeTask(await get(`SELECT * FROM tarefas WHERE id = ?`, [request.params.id]))
+    });
+  } catch (error) {
+    console.error(error);
+    response.status(500).json({ error: 'Erro ao atualizar status da tarefa.' });
+  }
+});
+
+app.put('/api/mindset/:date', async (request, response) => {
+  try {
+    const date = normalizeDate(request.params.date);
+    const now = nowISO();
+
+    await run(
+      `
+      INSERT INTO mindset (data_ref, energia, foco, motivacao, humor, notas, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(data_ref)
+      DO UPDATE SET
+        energia = excluded.energia,
+        foco = excluded.foco,
+        motivacao = excluded.motivacao,
+        humor = excluded.humor,
+        notas = excluded.notas,
+        updated_at = excluded.updated_at
+      `,
+      [
+        date,
+        clampNumber(request.body.energia, 1, 5, 2),
+        clampNumber(request.body.foco, 1, 5, 2),
+        clampNumber(request.body.motivacao, 1, 5, 2),
+        clampNumber(request.body.humor, 1, 5, 2),
+        String(request.body.notas || ''),
+        now,
+        now
+      ]
+    );
+
+    response.json({
+      ok: true,
+      mindset: await getMindsetForDate(date)
+    });
+  } catch (error) {
+    console.error(error);
+    response.status(500).json({ error: 'Erro ao salvar check-in.' });
+  }
+});
+
+app.get('/api/checkins', async (request, response) => {
+  try {
+    const month = normalizeMonth(request.query.month);
+    const q = String(request.query.q || '').trim().toLowerCase();
+    const { start, end } = getMonthRange(month);
+
+    let rows = await all(
+      `
+      SELECT *
+      FROM mindset
+      WHERE data_ref BETWEEN ? AND ?
+      ORDER BY data_ref DESC
+      LIMIT 80
+      `,
+      [start, end]
+    );
+
+    if (q) {
+      rows = rows.filter((row) => String(row.notas || '').toLowerCase().includes(q));
+    }
+
+    response.json({
+      ok: true,
+      month,
+      items: rows.map(normalizeMindset)
+    });
+  } catch (error) {
+    console.error(error);
+    response.status(500).json({ error: 'Erro ao carregar check-ins.' });
+  }
+});
+
+app.get('/api/notes', async (request, response) => {
+  try {
+    const month = normalizeMonth(request.query.month);
+    const q = String(request.query.q || '').trim().toLowerCase();
+    const { start, end } = getMonthRange(month);
+
+    let rows = await all(
+      `
+      SELECT *
+      FROM mindset
+      WHERE data_ref BETWEEN ? AND ?
+        AND notas IS NOT NULL
+        AND TRIM(notas) != ''
+      ORDER BY data_ref DESC
+      LIMIT 80
+      `,
+      [start, end]
+    );
+
+    if (q) {
+      rows = rows.filter((row) => String(row.notas || '').toLowerCase().includes(q));
+    }
+
+    response.json({
+      ok: true,
+      month,
+      items: rows.map(normalizeMindset)
+    });
+  } catch (error) {
+    console.error(error);
+    response.status(500).json({ error: 'Erro ao carregar notas.' });
+  }
+});
+
+app.get('/api/day/:date/export-md', async (request, response) => {
+  try {
+    const date = normalizeDate(request.params.date);
+    response.json({
+      ok: true,
+      date,
+      markdown: await buildDayMarkdown(date)
+    });
+  } catch (error) {
+    console.error(error);
+    response.status(500).json({ error: 'Erro ao exportar Markdown.' });
+  }
+});
+
+app.get('/api/day/:date/markdown', async (request, response) => {
+  try {
+    const date = normalizeDate(request.params.date);
+    response.type('text/markdown').send(await buildDayMarkdown(date));
+  } catch (error) {
+    console.error(error);
+    response.status(500).send('Erro ao exportar Markdown.');
+  }
+});
+
+app.get('/api/backup', (request, response) => {
+  if (!fs.existsSync(DB_PATH)) {
+    return response.status(404).json({ error: 'Banco de dados não encontrado.' });
+  }
+
+  response.download(DB_PATH, `quiet_progress_${todayISO()}.db`);
+});
+
+app.post('/api/sistema/restore', upload.single('database'), async (request, response) => {
+  const uploadedPath = request.file?.path;
+
+  try {
+    if (!request.file) {
+      return response.status(400).json({ error: 'Arquivo .db é obrigatório.' });
+    }
+
+    const backupBeforeRestore = `${DB_PATH}.before_restore_${Date.now()}.bak`;
+
+    await closeDatabase();
+
+    if (fs.existsSync(DB_PATH)) {
+      fs.copyFileSync(DB_PATH, backupBeforeRestore);
+    }
+
+    fs.copyFileSync(uploadedPath, DB_PATH);
+
+    connectDatabase();
+    await initDatabase();
+
+    response.json({
+      ok: true,
+      message: 'Banco restaurado com sucesso.'
+    });
+  } catch (error) {
+    console.error(error);
+
+    try {
+      connectDatabase();
+    } catch (reconnectError) {
+      console.error('[Restore] Falha ao reconectar banco:', reconnectError);
+    }
+
+    response.status(500).json({
+      error: 'Erro ao restaurar banco de dados.',
+      details: error.message
+    });
+  } finally {
+    if (uploadedPath && fs.existsSync(uploadedPath)) {
+      fs.unlinkSync(uploadedPath);
+    }
+  }
+});
+
+app.get('*', (request, response) => {
+  response.sendFile(path.join(__dirname, '..', 'public', 'index.html'));
+});
+
 initDatabase()
   .then(() => {
     app.listen(PORT, '0.0.0.0', () => {
-      const lanUrls = getLocalNetworkUrls(PORT);
+      const urls = getLocalNetworkUrls(PORT);
 
       console.log('');
       console.log('==========================================');
-      console.log(' Quiet Progress está online');
+      console.log(' Quiet Progress v3 Temporal está online');
       console.log('==========================================');
       console.log(` Local: http://localhost:${PORT}`);
 
-      if (lanUrls.length) {
+      if (urls.length) {
         console.log(' Rede local:');
-        lanUrls.forEach((url) => {
-          console.log(` - ${url}`);
-        });
+        urls.forEach((url) => console.log(` - ${url}`));
       } else {
         console.log(' Rede local: nenhum IP LAN detectado.');
       }
@@ -1280,6 +1208,6 @@ initDatabase()
     });
   })
   .catch((error) => {
-    console.error('[Startup] Falha ao inicializar aplicação:', error);
+    console.error('[Startup] Falha ao inicializar:', error);
     process.exit(1);
   });

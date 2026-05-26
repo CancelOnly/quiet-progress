@@ -1,159 +1,138 @@
-const API_BASE = '/api';
+const API = '/api';
 
-let progressChartInstance = null;
-let habitsChartInstance = null;
-let mindsetChartInstance = null;
-let estatisticasLoaded = false;
+const state = {
+  todayDate: toISODate(new Date()),
+  selectedDate: toISODate(new Date()),
+  currentMonth: toISODate(new Date()).slice(0, 7),
+  selectedWeekStart: getWeekStart(toISODate(new Date())),
+  activeView: 'overview',
+  dashboard: null,
+  day: null,
+  stats: null,
+  health: null,
+};
 
+const charts = {
+  monthDonut: null,
+  tasksBar: null,
+  mindsetLine: null,
+  habitBar: null,
+  weekBar: null,
+};
+
+let activeModalCallback = null;
 let lockinInitialSeconds = 25 * 60;
 let lockinRemainingSeconds = lockinInitialSeconds;
 let lockinInterval = null;
 let lockinRunning = false;
 
-const state = {
-  dashboard: null,
-  route: 'cockpit',
-};
-
-const paginationState = {
-  journal: {
-    page: 1,
-    limit: 20,
-    hasMore: false,
-    loading: false,
-  },
-  taskHistory: {
-    page: 1,
-    limit: 20,
-    hasMore: false,
-    loading: false,
-  },
-};
-
-const routes = {
-  cockpit: document.getElementById('view-cockpit'),
-  habits: document.getElementById('view-habits'),
-  tasks: document.getElementById('view-tasks'),
-  stats: document.getElementById('view-stats'),
-};
-
 const elements = {
+  sidebar: document.getElementById('sidebar'),
+  sidebarOverlay: document.getElementById('sidebarOverlay'),
+  mobileMenuBtn: document.getElementById('mobileMenuBtn'),
+  mobileTodayBtn: document.getElementById('mobileTodayBtn'),
+  mobileTemporalBadge: document.getElementById('mobileTemporalBadge'),
+
   navItems: Array.from(document.querySelectorAll('.nav-item')),
-  apiStatus: document.getElementById('apiStatus'),
-  progressFill: document.getElementById('progressFill'),
-  progressPercent: document.getElementById('progressPercent'),
-  progressMeta: document.getElementById('progressMeta'),
-  stateChip: document.getElementById('stateChip'),
-  doneCount: document.getElementById('doneCount'),
-  remainingCount: document.getElementById('remainingCount'),
-  focusState: document.getElementById('focusState'),
-  todayHighlights: document.getElementById('todayHighlights'),
-  habitList: document.getElementById('habitList'),
-  taskList: document.getElementById('taskList'),
-  mindsetGrid: document.getElementById('mindsetGrid'),
-  habitCountChip: document.getElementById('habitCountChip'),
-  taskCountChip: document.getElementById('taskCountChip'),
-  taskForm: document.getElementById('taskForm'),
-  taskTitleInput: document.getElementById('taskTitleInput'),
-  taskPriorityInput: document.getElementById('taskPriorityInput'),
-  heatmapGrid: document.getElementById('heatmapGrid'),
-  progressChart: document.getElementById('progressChart'),
-  habitsChart: document.getElementById('habitsChart'),
-  mindsetChart: document.getElementById('mindsetChart'),
-  toast: document.getElementById('toast'),
+  bottomNavItems: Array.from(document.querySelectorAll('.bottom-nav-item')),
+  views: {
+    overview: document.getElementById('view-overview'),
+    tracker: document.getElementById('view-tracker'),
+    journal: document.getElementById('view-journal'),
+    backup: document.getElementById('view-backup'),
+  },
+
+  mainTitle: document.getElementById('mainTitle'),
+  todayLabel: document.getElementById('todayLabel'),
+  selectedLabel: document.getElementById('selectedLabel'),
+  dateModeBadge: document.getElementById('dateModeBadge'),
+  trackerTodayLabel: document.getElementById('trackerTodayLabel'),
+  trackerSelectedLabel: document.getElementById('trackerSelectedLabel'),
+  trackerDateModeBadge: document.getElementById('trackerDateModeBadge'),
+
+  goTodayBtn: document.getElementById('goTodayBtn'),
+  openTrackerBtn: document.getElementById('openTrackerBtn'),
+  overviewOpenTrackerBtn: document.getElementById('overviewOpenTrackerBtn'),
+  quickAddTaskBtn: document.getElementById('quickAddTaskBtn'),
+
+  overviewTitle: document.getElementById('overviewTitle'),
+  overviewProgressChip: document.getElementById('overviewProgressChip'),
+  overviewHabitStat: document.getElementById('overviewHabitStat'),
+  overviewTaskStat: document.getElementById('overviewTaskStat'),
+  overviewTotalStat: document.getElementById('overviewTotalStat'),
+  overviewProgressFill: document.getElementById('overviewProgressFill'),
+  overviewTaskList: document.getElementById('overviewTaskList'),
+  overviewAddTaskBtn: document.getElementById('overviewAddTaskBtn'),
+  overviewMindsetMini: document.getElementById('overviewMindsetMini'),
+  overviewNotePreview: document.getElementById('overviewNotePreview'),
+  overviewEditCheckinBtn: document.getElementById('overviewEditCheckinBtn'),
+  overviewCopyMarkdownBtn: document.getElementById('overviewCopyMarkdownBtn'),
+  overviewDownloadMarkdownBtn: document.getElementById(
+    'overviewDownloadMarkdownBtn'
+  ),
+
+  monthTitle: document.getElementById('monthTitle'),
+  prevMonthBtn: document.getElementById('prevMonthBtn'),
+  nextMonthBtn: document.getElementById('nextMonthBtn'),
+  monthTodayBtn: document.getElementById('monthTodayBtn'),
+  monthPicker: document.getElementById('monthPicker'),
+  addHabitBtn: document.getElementById('addHabitBtn'),
+  addHabitFromDateBtn: document.getElementById('addHabitFromDateBtn'),
+  habitMatrix: document.getElementById('habitMatrix'),
+  habitProgressList: document.getElementById('habitProgressList'),
+
+  weekTitle: document.getElementById('weekTitle'),
+  prevWeekBtn: document.getElementById('prevWeekBtn'),
+  nextWeekBtn: document.getElementById('nextWeekBtn'),
+  weekDayTabs: document.getElementById('weekDayTabs'),
+  weekCards: document.getElementById('weekCards'),
+
+  trackerCheckinTitle: document.getElementById('trackerCheckinTitle'),
+  trackerMindsetGrid: document.getElementById('trackerMindsetGrid'),
+  trackerNotes: document.getElementById('trackerNotes'),
+  trackerSaveMindsetBtn: document.getElementById('trackerSaveMindsetBtn'),
+  trackerCopyMarkdownBtn: document.getElementById('trackerCopyMarkdownBtn'),
+  trackerDownloadMarkdownBtn: document.getElementById(
+    'trackerDownloadMarkdownBtn'
+  ),
+
+  journalMonthFilter: document.getElementById('journalMonthFilter'),
+  journalSearch: document.getElementById('journalSearch'),
+  journalList: document.getElementById('journalList'),
+  journalDetail: document.getElementById('journalDetail'),
+
   backupBtn: document.getElementById('backupBtn'),
+  sidebarBackupBtn: document.getElementById('sidebarBackupBtn'),
+  restoreDbBtn: document.getElementById('restoreDbBtn'),
+  restoreDbInput: document.getElementById('restoreDbInput'),
+  healthBox: document.getElementById('healthBox'),
+
   lockinTime: document.getElementById('lockinTime'),
   lockinStartBtn: document.getElementById('lockinStartBtn'),
   lockinPauseBtn: document.getElementById('lockinPauseBtn'),
   lockinResetBtn: document.getElementById('lockinResetBtn'),
-  habitForm: document.getElementById('habitForm'),
-  habitTitleInput: document.getElementById('habitTitleInput'),
-  mindsetNotes: document.getElementById('mindsetNotes'),
-  journalFeed: document.getElementById('journal-feed'),
-  reloadJournalBtn: document.getElementById('reloadJournalBtn'),
-  weeklyTracker: document.getElementById('weekly-tracker'),
-  saveJournalBtn: document.getElementById('saveJournalBtn'),
-  taskHistoryBtn: document.getElementById('taskHistoryBtn'),
-  taskHistoryList: document.getElementById('taskHistoryList'),
-  modalOverlay: document.getElementById('modalOverlay'),
-  modalTitle: document.getElementById('modalTitle'),
-  modalMessage: document.getElementById('modalMessage'),
-  modalInputWrap: document.getElementById('modalInputWrap'),
-  modalInput: document.getElementById('modalInput'),
-  modalCancelBtn: document.getElementById('modalCancelBtn'),
-  modalConfirmBtn: document.getElementById('modalConfirmBtn'),
-  restoreDbBtn: document.getElementById('restoreDbBtn'),
-  restoreDbInput: document.getElementById('restoreDbInput'),
   lockinPresetButtons: Array.from(document.querySelectorAll('.lockin-preset')),
   lockinCustomWrap: document.getElementById('lockinCustomWrap'),
   lockinCustomInput: document.getElementById('lockinCustomInput'),
-  cockpitTitle: document.getElementById('cockpitTitle'),
-  tasksTitle: document.getElementById('tasksTitle'),
-  exportObsidianBtn: document.getElementById('exportObsidianBtn'),
+
+  monthDonutChart: document.getElementById('monthDonutChart'),
+  tasksBarChart: document.getElementById('tasksBarChart'),
+  mindsetLineChart: document.getElementById('mindsetLineChart'),
+  habitBarChart: document.getElementById('habitBarChart'),
+  weekBarChart: document.getElementById('weekBarChart'),
+
+  modalOverlay: document.getElementById('modalOverlay'),
+  modalTitle: document.getElementById('modalTitle'),
+  modalMessage: document.getElementById('modalMessage'),
+  modalBody: document.getElementById('modalBody'),
+  modalCancelBtn: document.getElementById('modalCancelBtn'),
+  modalConfirmBtn: document.getElementById('modalConfirmBtn'),
+
+  toast: document.getElementById('toast'),
 };
 
-function formatLockinTime(totalSeconds) {
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-
-  return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
-}
-
-function renderLockinTimer() {
-  if (!elements.lockinTime) return;
-
-  elements.lockinTime.textContent = formatLockinTime(lockinRemainingSeconds);
-  document.body.classList.toggle('focus-mode', lockinRunning);
-}
-
-function startLockinTimer() {
-  if (lockinRunning) return;
-
-  lockinRunning = true;
-  renderLockinTimer();
-
-  lockinInterval = window.setInterval(() => {
-    lockinRemainingSeconds -= 1;
-
-    if (lockinRemainingSeconds <= 0) {
-      lockinRemainingSeconds = 0;
-      pauseLockinTimer();
-      showToast('Lock In finalizado. Respira e registra o próximo passo.');
-    }
-
-    renderLockinTimer();
-  }, 1000);
-}
-
-function pauseLockinTimer() {
-  lockinRunning = false;
-
-  if (lockinInterval) {
-    window.clearInterval(lockinInterval);
-    lockinInterval = null;
-  }
-
-  renderLockinTimer();
-}
-
-function resetLockinTimer() {
-  pauseLockinTimer();
-  lockinRemainingSeconds = lockinInitialSeconds;
-  renderLockinTimer();
-}
-
-function showToast(message) {
-  elements.toast.textContent = message;
-  elements.toast.classList.add('show');
-
-  window.clearTimeout(showToast.timeout);
-  showToast.timeout = window.setTimeout(() => {
-    elements.toast.classList.remove('show');
-  }, 1800);
-}
-
-async function request(path, options = {}) {
-  const response = await fetch(`${API_BASE}${path}`, {
+async function api(path, options = {}) {
+  const response = await fetch(`${API}${path}`, {
     headers: {
       'Content-Type': 'application/json',
       ...(options.headers || {}),
@@ -170,28 +149,35 @@ async function request(path, options = {}) {
   return payload;
 }
 
-function navigateTo(routeName) {
-  state.route = routeName;
+function toISODate(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
 
-  Object.entries(routes).forEach(([name, view]) => {
-    view.classList.toggle('active-view', name === routeName);
-  });
+function parseISODate(dateISO) {
+  const [year, month, day] = dateISO.split('-').map(Number);
+  return new Date(year, month - 1, day);
+}
 
-  elements.navItems.forEach((item) => {
-    item.classList.toggle('active', item.dataset.route === routeName);
-  });
+function addDays(dateISO, amount) {
+  const date = parseISODate(dateISO);
+  date.setDate(date.getDate() + amount);
+  return toISODate(date);
+}
 
-  if (routeName === 'stats') {
-    loadEstatisticas();
-  }
+function getWeekdayIndex(dateISO) {
+  const day = parseISODate(dateISO).getDay();
+  return day === 0 ? 6 : day - 1;
+}
 
-  if (routeName === 'cockpit' || routeName === 'habits') {
-    loadJournalHistory();
-  }
+function getWeekStart(dateISO) {
+  return addDays(dateISO, -getWeekdayIndex(dateISO));
 }
 
 function escapeHTML(value) {
-  return String(value)
+  return String(value ?? '')
     .replaceAll('&', '&amp;')
     .replaceAll('<', '&lt;')
     .replaceAll('>', '&gt;')
@@ -199,1499 +185,1159 @@ function escapeHTML(value) {
     .replaceAll("'", '&#039;');
 }
 
-function priorityClass(priority) {
-  const normalized = String(priority).toUpperCase();
-
-  if (normalized === 'ALTA') return 'high';
-  if (normalized === 'BAIXA') return 'low';
-  return 'medium';
+function formatShortDate(dateISO) {
+  const [year, month, day] = dateISO.split('-');
+  return `${day}/${month}/${year}`;
 }
 
-function updateProgress(resumo) {
-  const percent = resumo?.porcentagem || 0;
-  const total = resumo?.totalItens || 0;
-  const done = resumo?.totalConcluidos || 0;
-  const remaining = resumo?.restantes || 0;
+function formatDayMonth(dateISO) {
+  const [, month, day] = dateISO.split('-');
+  return `${day}/${month}`;
+}
 
-  elements.progressFill.style.width = `${percent}%`;
-  elements.progressPercent.textContent = percent;
-  elements.progressMeta.textContent = `${done} de ${total} sistemas concluídos`;
-  elements.doneCount.textContent = done;
-  elements.remainingCount.textContent = remaining;
-  elements.progressFill.classList.toggle(
+function formatLongDate(dateISO) {
+  const label = parseISODate(dateISO).toLocaleDateString('pt-BR', {
+    weekday: 'long',
+    day: '2-digit',
+    month: 'long',
+    year: 'numeric',
+  });
+  return label.charAt(0).toUpperCase() + label.slice(1);
+}
+
+function monthLabel(month) {
+  const [year, monthNum] = month.split('-').map(Number);
+  const date = new Date(year, monthNum - 1, 1);
+  const label = date.toLocaleDateString('pt-BR', {
+    month: 'long',
+    year: 'numeric',
+  });
+  return label.charAt(0).toUpperCase() + label.slice(1);
+}
+
+function getDateMode() {
+  if (state.selectedDate === state.todayDate) return 'today';
+  if (state.selectedDate < state.todayDate) return 'past';
+  return 'future';
+}
+
+function getDateModeLabel() {
+  const mode = getDateMode();
+  if (mode === 'today') return 'Editando hoje';
+  if (mode === 'past') return 'Editando dia passado';
+  return 'Planejando dia futuro';
+}
+
+function showToast(message) {
+  elements.toast.textContent = message;
+  elements.toast.classList.add('show');
+
+  window.clearTimeout(showToast.timeout);
+  showToast.timeout = window.setTimeout(() => {
+    elements.toast.classList.remove('show');
+  }, 2100);
+}
+
+function debounce(fn, wait) {
+  let timeout = null;
+  return (...args) => {
+    window.clearTimeout(timeout);
+    timeout = window.setTimeout(() => fn(...args), wait);
+  };
+}
+
+function setView(view) {
+  state.activeView = view;
+
+  Object.entries(elements.views).forEach(([name, element]) => {
+    element.classList.toggle('active-view', name === view);
+  });
+
+  elements.navItems.forEach((item) => {
+    item.classList.toggle('active', item.dataset.view === view);
+  });
+
+  elements.bottomNavItems.forEach((item) => {
+    item.classList.toggle('active', item.dataset.view === view);
+  });
+
+  document.body.classList.remove('sidebar-open');
+
+  if (view === 'journal') loadJournal();
+  if (view === 'backup') loadHealth();
+  if (view === 'tracker') {
+    renderTracker();
+  }
+}
+
+function updateTemporalHeader() {
+  const mode = getDateMode();
+  const label = getDateModeLabel();
+
+  elements.todayLabel.textContent = formatShortDate(state.todayDate);
+  elements.selectedLabel.textContent = formatShortDate(state.selectedDate);
+  elements.dateModeBadge.textContent = label;
+  elements.dateModeBadge.dataset.mode = mode;
+  elements.trackerTodayLabel.textContent = formatShortDate(state.todayDate);
+  elements.trackerSelectedLabel.textContent = formatShortDate(
+    state.selectedDate
+  );
+  elements.trackerDateModeBadge.textContent = label;
+  elements.trackerDateModeBadge.dataset.mode = mode;
+  elements.mobileTemporalBadge.textContent = `${formatDayMonth(state.selectedDate)} · ${label}`;
+}
+
+async function selectDate(dateISO, options = {}) {
+  state.selectedDate = dateISO;
+  state.currentMonth = dateISO.slice(0, 7);
+  state.selectedWeekStart = getWeekStart(dateISO);
+
+  updateTemporalHeader();
+
+  const dashboardIsCurrentMonth =
+    state.dashboard && state.dashboard.month === state.currentMonth;
+
+  if (!options.skipMonth && !dashboardIsCurrentMonth) {
+    await loadDashboard();
+  }
+
+  await loadDay(state.selectedDate);
+
+  if (state.dashboard && state.dashboard.month === state.currentMonth) {
+    renderTracker();
+  }
+
+  if (state.activeView === 'journal') {
+    await loadJournal();
+  }
+}
+
+async function refreshAll() {
+  await loadDashboard();
+  await loadDay(state.selectedDate);
+
+  if (state.activeView === 'journal') {
+    await loadJournal();
+  }
+
+  updateTemporalHeader();
+}
+
+async function loadDashboard() {
+  elements.monthPicker.value = state.currentMonth;
+  elements.journalMonthFilter.value = state.currentMonth;
+
+  const dashboard = await api(`/dashboard?month=${state.currentMonth}`);
+  const stats = await api(`/stats?month=${state.currentMonth}`);
+
+  state.dashboard = dashboard;
+  state.stats = stats;
+
+  renderTracker();
+  renderHabitProgressList();
+  renderCharts();
+}
+
+async function loadDay(dateISO = state.selectedDate) {
+  const day = await api(`/day/${dateISO}`);
+  state.day = day;
+
+  renderOverview();
+  renderTrackerCheckin();
+  renderWeek();
+}
+
+function renderOverview() {
+  if (!state.day) return;
+
+  elements.overviewTitle.textContent = `Resumo — ${formatLongDate(state.selectedDate)}`;
+  elements.overviewProgressChip.textContent = `${state.day.progress.totalPercent}%`;
+  elements.overviewHabitStat.textContent = `${state.day.progress.habitsDone}/${state.day.progress.habitsTotal}`;
+  elements.overviewTaskStat.textContent = `${state.day.progress.tasksDone}/${state.day.progress.tasksTotal}`;
+  elements.overviewTotalStat.textContent = `${state.day.progress.totalPercent}%`;
+  elements.overviewProgressFill.style.width = `${state.day.progress.totalPercent}%`;
+  elements.overviewProgressFill.classList.toggle(
     'complete',
-    percent === 100 && total > 0
+    state.day.progress.totalPercent === 100
   );
 
-  if (percent === 100 && total > 0) {
-    elements.stateChip.textContent = 'CLEAR';
-    elements.focusState.textContent = 'Locked';
-  } else if (percent >= 65) {
-    elements.stateChip.textContent = 'FLOW';
-    elements.focusState.textContent = 'Warm';
-  } else if (percent >= 30) {
-    elements.stateChip.textContent = 'SYNC';
-    elements.focusState.textContent = 'Boot';
-  } else {
-    elements.stateChip.textContent = 'INIT';
-    elements.focusState.textContent = 'Cold';
-  }
+  renderTaskList(elements.overviewTaskList, state.day.tasks.slice(0, 5), {
+    empty: 'Nenhuma tarefa neste dia.',
+    compact: true,
+  });
+
+  const mindset = state.day.mindset;
+  elements.overviewMindsetMini.innerHTML = `
+    <span>Energy <strong>${mindset.energia}/5</strong></span>
+    <span>Focus <strong>${mindset.foco}/5</strong></span>
+    <span>Motivation <strong>${mindset.motivacao}/5</strong></span>
+    <span>Mood <strong>${mindset.humor}/5</strong></span>
+  `;
+
+  elements.overviewNotePreview.textContent = mindset.notas
+    ? mindset.notas.slice(0, 260)
+    : 'Sem nota registrada para este dia.';
 }
 
-async function addHabit(titulo) {
-  const cleanTitle = String(titulo || '').trim();
+function renderTracker() {
+  if (!state.dashboard) return;
 
-  if (!cleanTitle) {
-    showToast('Digite um nome para o hábito.');
-    return;
-  }
-
-  try {
-    const payload = await request('/habitos', {
-      method: 'POST',
-      body: JSON.stringify({
-        titulo: cleanTitle,
-        subtitulo: 'Hábito personalizado.',
-      }),
-    });
-
-    elements.habitTitleInput.value = '';
-    renderDashboard(payload.dashboard);
-    showToast('Hábito criado.');
-  } catch (error) {
-    showToast(error.message);
-  }
+  elements.monthTitle.textContent = monthLabel(state.currentMonth);
+  renderHabitMatrix();
+  renderHabitProgressList();
+  renderWeek();
+  renderTrackerCheckin();
 }
 
-async function deleteHabit(id, itemElement) {
-  showConfirmModal(
-    'Tem certeza que deseja excluir? Isso apagará todo o histórico associado.',
-    async () => {
-      try {
-        itemElement.classList.add('removing');
+function renderHabitMatrix() {
+  if (!state.dashboard) return;
 
-        const payload = await request(`/habitos/${id}`, {
-          method: 'DELETE',
-        });
+  const weeks = state.dashboard.weeks;
+  const habits = state.dashboard.habits;
+  const logMap = state.dashboard.logMap || {};
 
-        window.setTimeout(() => {
-          renderDashboard(payload.dashboard);
-          showToast('Hábito removido.');
-        }, 220);
-      } catch (error) {
-        itemElement.classList.remove('removing');
-        showToast(error.message);
-      }
-    }
-  );
-}
+  /*
+    Importante:
+    O Habit Matrix agora usa UMA ÚNICA grade CSS.
+    Header de semanas, header de dias e checkboxes compartilham
+    as mesmas colunas: coluna de hábito + repeat(totalDays, coluna do dia).
+    Isso elimina o desalinhamento causado por wrappers de semana com padding/gap próprios.
+  */
+  const days = weeks.flatMap((week) => week.days).filter(Boolean);
+  const totalDays = days.length;
 
-function renderTasks(tarefas) {
-  elements.taskCountChip.textContent = `${tarefas.length} Ops`;
+  const weekSpans = weeks
+    .map((week) => {
+      const weekDays = week.days.filter(Boolean);
+      if (!weekDays.length) return '';
 
-  if (!tarefas.length) {
-    elements.taskList.innerHTML = `<li class="empty-state">Nenhuma tarefa cadastrada para hoje.</li>`;
-    return;
-  }
-
-  elements.taskList.innerHTML = tarefas
-    .map((task) => {
-      const done = task.status === 'CONCLUIDO';
+      const firstIndex = days.findIndex((day) => day.date === weekDays[0].date);
+      const startCol = firstIndex + 2;
 
       return `
-  <li class="task-item ${done ? 'done' : ''}" data-task-id="${task.id}">
-    <label class="custom-check">
-      <input type="checkbox" class="task-check" ${done ? 'checked' : ''} />
-      <span class="box"></span>
-    </label>
-
-    <div class="item-main">
-      <div class="item-title">${escapeHTML(task.titulo)}</div>
-      <div class="item-subtitle">Criada em ${escapeHTML(task.data_criacao)} · Status: ${escapeHTML(task.status)}</div>
-    </div>
-
-    <span class="priority ${priorityClass(task.prioridade)}">${escapeHTML(task.prioridade)}</span>
-
-    <div class="task-actions">
-      <button class="status-btn" type="button">${done ? 'Done' : 'Start'}</button>
-      <button class="edit-task-btn" type="button" aria-label="Editar tarefa">✎</button>
-      <button class="delete-task-btn" type="button" aria-label="Excluir tarefa">×</button>
-    </div>
-  </li>
-`;
+        <div
+          class="qpmatrix-week week-accent-${week.index % 5}"
+          style="grid-column: ${startCol} / span ${weekDays.length}; grid-row: 1;"
+        >
+          ${week.label}
+        </div>
+      `;
     })
     .join('');
 
-  elements.taskList.querySelectorAll('.task-check').forEach((checkbox) => {
-    checkbox.addEventListener('change', async (event) => {
-      const item = event.target.closest('.task-item');
-      const taskId = Number(item.dataset.taskId);
+  const dayHeaders = days
+    .map((day, index) => {
+      const isToday = day.date === state.todayDate;
+      const isSelected = day.date === state.selectedDate;
+      const isFuture = day.date > state.todayDate;
+      const weekday = parseISODate(day.date)
+        .toLocaleDateString('pt-BR', { weekday: 'short' })
+        .replace('.', '');
 
-      item.classList.toggle('done', event.target.checked);
+      return `
+        <button
+          class="qpmatrix-day matrix-day-header ${isToday ? 'is-today' : ''} ${isSelected ? 'is-selected' : ''} ${isFuture ? 'is-future' : ''}"
+          type="button"
+          data-select-date="${day.date}"
+          style="grid-column: ${index + 2}; grid-row: 2;"
+          title="Selecionar ${formatShortDate(day.date)}"
+          aria-label="Selecionar ${formatShortDate(day.date)}"
+        >
+          <span class="day-week">${escapeHTML(weekday)}</span>
+          <span class="day-num">${day.day}</span>
+          ${isToday ? '<strong>HOJE</strong>' : ''}
+          ${isSelected ? '<em>SEL.</em>' : ''}
+        </button>
+      `;
+    })
+    .join('');
 
-      try {
-        const payload = await request(`/tarefas/${taskId}`, {
-          method: 'PUT',
-          body: JSON.stringify({ action: 'toggle' }),
-        });
+  const rows = habits
+    .map((habit, habitIndex) => {
+      const row = habitIndex + 3;
 
-        renderDashboard(payload.dashboard);
-      } catch (error) {
-        event.target.checked = !event.target.checked;
-        item.classList.toggle('done', event.target.checked);
-        showToast(error.message);
-      }
-    });
-  });
+      const habitInfo = `
+        <div class="qpmatrix-habit habit-info" style="grid-column: 1; grid-row: ${row};">
+          <strong>${escapeHTML(habit.titulo)}</strong>
+          <small>${escapeHTML(habit.subtitulo || '')}</small>
+          <div class="habit-row-actions">
+            <button class="row-link edit-habit-inline" type="button" data-habit-id="${habit.id}">Editar</button>
+            <button class="row-link danger delete-habit-inline" type="button" data-habit-id="${habit.id}">Excluir</button>
+          </div>
+        </div>
+      `;
 
-  elements.taskList.querySelectorAll('.status-btn').forEach((button) => {
-    button.addEventListener('click', () => {
-      const checkbox = button
-        .closest('.task-item')
-        .querySelector('.task-check');
-      checkbox.checked = !checkbox.checked;
-      checkbox.dispatchEvent(new Event('change', { bubbles: true }));
-    });
-  });
+      const cells = days
+        .map((day, dayIndex) => {
+          const isToday = day.date === state.todayDate;
+          const isSelected = day.date === state.selectedDate;
+          const isFuture = day.date > state.todayDate;
+          const beforeStart = habit.data_inicio && day.date < habit.data_inicio;
+          const afterEnd = habit.data_fim && day.date > habit.data_fim;
+          const disabled = beforeStart || afterEnd || !habit.ativo;
+          const done = logMap[`${habit.id}:${day.date}`] === true;
+          const tooltip = `${habit.titulo} — ${formatShortDate(day.date)} — ${done ? 'concluído' : 'não concluído'}`;
 
-  elements.taskList.querySelectorAll('.edit-task-btn').forEach((button) => {
-    button.addEventListener('click', async (event) => {
-      event.stopPropagation();
+          return `
+            <button
+              class="qpmatrix-check habit-check-cell ${done ? 'done is-done' : ''} ${isToday ? 'is-today' : ''} ${isSelected ? 'is-selected' : ''} ${isFuture ? 'is-future' : ''} ${disabled ? 'disabled' : ''}"
+              type="button"
+              data-habit-id="${habit.id}"
+              data-date="${day.date}"
+              style="grid-column: ${dayIndex + 2}; grid-row: ${row};"
+              title="${escapeHTML(tooltip)}"
+              aria-label="${escapeHTML(tooltip)}"
+              ${disabled ? 'disabled' : ''}
+            >
+              <span class="habit-checkbox"></span>
+            </button>
+          `;
+        })
+        .join('');
 
-      const item = button.closest('.task-item');
-      const taskId = Number(item.dataset.taskId);
-      const title = item.querySelector('.item-title')?.textContent || '';
+      return `${habitInfo}${cells}`;
+    })
+    .join('');
 
-      await editTask(taskId, title);
-    });
-  });
+  elements.habitMatrix.innerHTML = `
+    <div class="qpmatrix" style="--days-in-month: ${totalDays};">
+      <div class="qpmatrix-corner" style="grid-column: 1; grid-row: 1 / span 2;">Hábitos</div>
+      ${weekSpans}
+      ${dayHeaders}
+      ${rows || '<div class="empty-state qpmatrix-empty" style="grid-column: 1 / -1; grid-row: 3;">Nenhum hábito ativo. Use + Hábito para criar.</div>'}
+    </div>
+  `;
+}
+function renderHabitProgressList() {
+  if (!state.dashboard) return;
 
-  elements.taskList.querySelectorAll('.delete-task-btn').forEach((button) => {
-    button.addEventListener('click', async (event) => {
-      event.stopPropagation();
+  const stats = state.dashboard.stats.habitStats || [];
 
-      const item = button.closest('.task-item');
-      const taskId = Number(item.dataset.taskId);
+  elements.habitProgressList.innerHTML = stats.length
+    ? stats
+        .sort((a, b) => b.percent - a.percent)
+        .map((item) => {
+          const tone =
+            item.percent >= 70 ? 'good' : item.percent >= 35 ? 'mid' : 'bad';
 
-      await deleteTask(taskId, item);
-    });
-  });
+          return `
+            <div class="habit-progress-item">
+              <div>
+                <strong>${escapeHTML(item.titulo)}</strong>
+                <span>${item.doneDays}/${item.possibleDays} dias</span>
+              </div>
+              <div class="habit-progress-bar">
+                <i class="${tone}" style="width:${item.percent}%"></i>
+              </div>
+              <b>${item.percent}%</b>
+            </div>
+          `;
+        })
+        .join('')
+    : '<div class="empty-state">Sem dados de hábitos neste mês.</div>';
 }
 
-function getDarkChartOptions(extraOptions = {}) {
+function renderWeek() {
+  if (!state.dashboard) return;
+
+  const start = state.selectedWeekStart;
+  const days = Array.from({ length: 7 }, (_, index) => addDays(start, index));
+
+  elements.weekTitle.textContent = `${formatShortDate(days[0])} → ${formatShortDate(days[6])}`;
+
+  elements.weekDayTabs.innerHTML = days
+    .map(
+      (date) => `
+      <button
+        class="week-tab ${date === state.selectedDate ? 'active' : ''} ${date === state.todayDate ? 'today' : ''}"
+        type="button"
+        data-date="${date}"
+      >
+        <span>${parseISODate(date).toLocaleDateString('pt-BR', { weekday: 'short' }).replace('.', '')}</span>
+        <strong>${formatDayMonth(date)}</strong>
+      </button>
+    `
+    )
+    .join('');
+
+  elements.weekCards.innerHTML = days
+    .map((date) => {
+      const tasks = state.dashboard.tasksByDate?.[date] || [];
+      const daySummary = state.dashboard.days?.[date] || { taskPercent: 0 };
+      const dateLabel = parseISODate(date).toLocaleDateString('pt-BR', {
+        weekday: 'long',
+        day: '2-digit',
+        month: '2-digit',
+      });
+
+      return `
+        <article class="week-card ${date === state.selectedDate ? 'selected' : ''} ${date === state.todayDate ? 'today' : ''}" data-date="${date}">
+          <div class="week-card-head">
+            <button class="week-card-date" type="button" data-date="${date}">
+              <span>${escapeHTML(dateLabel)}</span>
+              <strong>${daySummary.taskPercent || 0}% tarefas</strong>
+            </button>
+            <button class="mini-action add-task-for-date" type="button" data-date="${date}">+</button>
+          </div>
+
+          <div class="ring" style="--p:${daySummary.taskPercent || 0}">
+            <span>${daySummary.taskPercent || 0}%</span>
+          </div>
+
+          <ul class="task-list compact">
+            ${
+              tasks.length
+                ? tasks
+                    .map(
+                      (task) => `
+                      <li class="task-mini ${task.status === 'CONCLUIDO' ? 'done' : ''}">
+                        <button class="task-toggle mini" type="button" data-task-id="${task.id}">${task.status === 'CONCLUIDO' ? '✓' : ''}</button>
+                        <span>${escapeHTML(task.titulo)}</span>
+                        <button class="edit-task-btn mini" type="button" data-task-id="${task.id}">✎</button>
+                        <button class="delete-task-btn mini" type="button" data-task-id="${task.id}">×</button>
+                      </li>
+                    `
+                    )
+                    .join('')
+                : '<li class="empty-state small">Sem tarefas.</li>'
+            }
+          </ul>
+        </article>
+      `;
+    })
+    .join('');
+}
+
+function renderTrackerCheckin() {
+  if (!state.day) return;
+
+  elements.trackerCheckinTitle.textContent = `Check-in — ${formatLongDate(state.selectedDate)}`;
+  renderMindsetEditor(elements.trackerMindsetGrid, state.day.mindset);
+  elements.trackerNotes.value = state.day.mindset.notas || '';
+}
+
+function renderTaskList(container, tasks, options = {}) {
+  if (!tasks.length) {
+    container.innerHTML = `<li class="empty-state">${options.empty || 'Nenhuma tarefa.'}</li>`;
+    return;
+  }
+
+  container.innerHTML = tasks
+    .map(
+      (task) => `
+      <li class="task-item ${task.status === 'CONCLUIDO' ? 'done' : ''}" data-task-id="${task.id}">
+        <button class="touch-check task-toggle ${task.status === 'CONCLUIDO' ? 'done' : ''}" type="button" data-task-id="${task.id}">
+          ${task.status === 'CONCLUIDO' ? '✓' : ''}
+        </button>
+        <div class="item-main">
+          <div class="item-title">${escapeHTML(task.titulo)}</div>
+          <div class="item-subtitle">${escapeHTML(task.descricao || '')}</div>
+          <div class="task-meta">
+            <span>${escapeHTML(task.prioridade)}</span>
+            <span>${formatShortDate(task.data_ref)}</span>
+          </div>
+        </div>
+        <div class="task-actions">
+          <button class="edit-task-btn" type="button" data-task-id="${task.id}">✎</button>
+          <button class="delete-task-btn" type="button" data-task-id="${task.id}">×</button>
+        </div>
+      </li>
+    `
+    )
+    .join('');
+}
+
+function renderMindsetEditor(container, mindset) {
+  const configs = [
+    ['energia', 'Energy', '⚡'],
+    ['foco', 'Focus', '◎'],
+    ['motivacao', 'Motivation', '◆'],
+    ['humor', 'Mood', '☾'],
+  ];
+
+  container.innerHTML = configs
+    .map(([key, label, icon]) => {
+      const value = Number(mindset[key] || 2);
+
+      return `
+        <article class="mind-card" data-stat="${key}">
+          <div class="mind-label">${label} <span>${icon}</span></div>
+          <div class="mind-value">${value}</div>
+          <div class="mind-buttons">
+            ${[1, 2, 3, 4, 5]
+              .map(
+                (number) => `
+                <button
+                  class="mind-btn ${number === value ? 'active' : ''}"
+                  type="button"
+                  data-stat="${key}"
+                  data-value="${number}"
+                >
+                  ${number}
+                </button>
+              `
+              )
+              .join('')}
+          </div>
+        </article>
+      `;
+    })
+    .join('');
+}
+
+function destroyChart(key) {
+  if (charts[key]) {
+    charts[key].destroy();
+    charts[key] = null;
+  }
+}
+
+function renderCharts() {
+  if (!state.stats || typeof Chart === 'undefined') return;
+
+  renderMonthDonut();
+  renderTasksBar();
+  renderMindsetLine();
+  renderHabitBar();
+  renderWeekBar();
+}
+
+function baseChartOptions(extra = {}) {
   return {
     responsive: true,
     maintainAspectRatio: false,
-    animation: {
-      duration: 650,
-      easing: 'easeOutQuart',
-    },
-    interaction: {
-      intersect: false,
-      mode: 'index',
-    },
+    animation: { duration: 450, easing: 'easeOutQuart' },
     plugins: {
       legend: {
-        display: true,
         labels: {
           color: '#A2A7B4',
           boxWidth: 10,
           boxHeight: 10,
           usePointStyle: true,
-          pointStyle: 'circle',
-          font: {
-            family: 'Inter',
-            size: 11,
-            weight: '800',
-          },
+          font: { family: 'Inter', size: 10, weight: '800' },
         },
       },
       tooltip: {
-        backgroundColor: 'rgba(10, 10, 10, 0.94)',
+        backgroundColor: 'rgba(10,10,10,0.96)',
         titleColor: '#F5F7FA',
         bodyColor: '#A2A7B4',
         borderColor: 'rgba(255,255,255,0.08)',
         borderWidth: 1,
         padding: 12,
-        displayColors: true,
       },
     },
     scales: {
       x: {
-        display: true,
-        ticks: {
-          color: '#777B86',
-          maxRotation: 0,
-          autoSkip: true,
-          font: {
-            family: 'Inter',
-            size: 10,
-            weight: '700',
-          },
-        },
-        grid: {
-          display: false,
-          drawBorder: false,
-        },
-        border: {
-          display: false,
-        },
+        ticks: { color: '#777B86' },
+        grid: { display: false },
+        border: { display: false },
       },
       y: {
-        display: true,
-        ticks: {
-          color: '#777B86',
-          font: {
-            family: 'Inter',
-            size: 10,
-            weight: '700',
-          },
-        },
-        grid: {
-          display: false,
-          drawBorder: false,
-        },
-        border: {
-          display: false,
-        },
+        ticks: { color: '#777B86' },
+        grid: { display: false },
+        border: { display: false },
+        beginAtZero: true,
       },
     },
-    ...extraOptions,
+    ...extra,
   };
 }
 
-function renderProgressChart(heatmapData) {
-  if (!elements.progressChart || typeof Chart === 'undefined') return;
+function renderMonthDonut() {
+  destroyChart('monthDonut');
 
-  const ctx = elements.progressChart.getContext('2d');
+  const done = state.stats.monthSummary.monthDone || 0;
+  const total = state.stats.monthSummary.monthItems || 0;
+  const pending = Math.max(total - done, 0);
 
-  const labels = heatmapData.map((item) => {
-    const [, month, day] = item.data.split('-');
-    return `${day}/${month}`;
-  });
-
-  const values = heatmapData.map((item) => Number(item.totalConcluido || 0));
-
-  if (progressChartInstance) {
-    progressChartInstance.destroy();
-  }
-
-  progressChartInstance = new Chart(ctx, {
-    type: 'line',
+  charts.monthDonut = new Chart(elements.monthDonutChart.getContext('2d'), {
+    type: 'doughnut',
     data: {
-      labels,
+      labels: ['Concluído', 'Pendente'],
       datasets: [
         {
-          label: 'Itens concluídos',
-          data: values,
-          fill: true,
+          data: [done, pending],
+          backgroundColor: ['#DEFF9A', 'rgba(255,255,255,0.06)'],
+          borderWidth: 0,
+        },
+      ],
+    },
+    options: baseChartOptions({ cutout: '70%', scales: undefined }),
+  });
+}
+
+function renderTasksBar() {
+  destroyChart('tasksBar');
+
+  const series = state.stats.tasksDoneSeries || [];
+
+  charts.tasksBar = new Chart(elements.tasksBarChart.getContext('2d'), {
+    type: 'bar',
+    data: {
+      labels: series.map((item) => item.date.slice(-2)),
+      datasets: [
+        {
+          label: 'Tarefas concluídas',
+          data: series.map((item) => item.total),
+          backgroundColor: '#11CAA0',
+          borderRadius: 999,
+        },
+      ],
+    },
+    options: baseChartOptions({
+      plugins: { ...baseChartOptions().plugins, legend: { display: false } },
+    }),
+  });
+}
+
+function renderMindsetLine() {
+  destroyChart('mindsetLine');
+
+  const series = state.stats.mindsetSeries || [];
+
+  charts.mindsetLine = new Chart(elements.mindsetLineChart.getContext('2d'), {
+    type: 'line',
+    data: {
+      labels: series.map((item) => item.date.slice(-2)),
+      datasets: [
+        {
+          label: 'Energy',
+          data: series.map((item) => item.energia),
           borderColor: '#DEFF9A',
-          backgroundColor: 'rgba(222, 255, 154, 0.10)',
-          pointBackgroundColor: '#DEFF9A',
-          pointBorderColor: '#000000',
-          pointRadius: 3,
-          pointHoverRadius: 6,
-          borderWidth: 3,
+          backgroundColor: 'rgba(222,255,154,0.08)',
+          tension: 0.4,
+        },
+        {
+          label: 'Focus',
+          data: series.map((item) => item.foco),
+          borderColor: '#11CAA0',
+          backgroundColor: 'rgba(17,202,160,0.08)',
+          tension: 0.4,
+        },
+        {
+          label: 'Motivation',
+          data: series.map((item) => item.motivacao),
+          borderColor: '#BC84EE',
+          backgroundColor: 'rgba(188,132,238,0.08)',
+          tension: 0.4,
+        },
+        {
+          label: 'Mood',
+          data: series.map((item) => item.humor),
+          borderColor: '#FFD166',
+          backgroundColor: 'rgba(255,209,102,0.08)',
           tension: 0.4,
         },
       ],
     },
-    options: getDarkChartOptions({
-      plugins: {
-        legend: {
-          display: true,
-          labels: {
-            color: '#A2A7B4',
-            boxWidth: 10,
-            boxHeight: 10,
-            usePointStyle: true,
-            pointStyle: 'circle',
-            font: {
-              family: 'Inter',
-              size: 11,
-              weight: '800',
-            },
-          },
-        },
-        tooltip: {
-          backgroundColor: 'rgba(10, 10, 10, 0.94)',
-          titleColor: '#F5F7FA',
-          bodyColor: '#A2A7B4',
-          borderColor: 'rgba(255,255,255,0.08)',
-          borderWidth: 1,
-          padding: 12,
-          displayColors: true,
-        },
-      },
+    options: baseChartOptions({
       scales: {
-        x: {
-          display: true,
-          ticks: {
-            color: '#777B86',
-            maxRotation: 0,
-            autoSkip: true,
-            maxTicksLimit: 8,
-            font: {
-              family: 'Inter',
-              size: 10,
-              weight: '700',
-            },
-          },
-          grid: {
-            display: false,
-            drawBorder: false,
-          },
-          border: {
-            display: false,
-          },
-        },
         y: {
-          display: true,
-          beginAtZero: true,
-          ticks: {
-            precision: 0,
-            color: '#777B86',
-            font: {
-              family: 'Inter',
-              size: 10,
-              weight: '700',
-            },
-          },
-          grid: {
-            display: false,
-            drawBorder: false,
-          },
-          border: {
-            display: false,
-          },
+          min: 0,
+          max: 5,
+          ticks: { color: '#777B86', stepSize: 1 },
+          grid: { display: false },
+          border: { display: false },
+        },
+        x: {
+          ticks: { color: '#777B86' },
+          grid: { display: false },
+          border: { display: false },
         },
       },
     }),
   });
 }
 
-function renderHabits(habitos) {
-  elements.habitCountChip.textContent = `${habitos.length} Core`;
+function renderHabitBar() {
+  destroyChart('habitBar');
 
-  elements.habitList.innerHTML = habitos
-    .map(
-      (habit) => `
-    <li class="habit-item ${habit.concluido ? 'done' : ''}" data-habit-id="${habit.id}">
-      <label class="custom-check">
-        <input type="checkbox" class="habit-check" ${habit.concluido ? 'checked' : ''} />
-        <span class="box"></span>
-      </label>
+  const series = state.stats.habitStats || [];
 
-      <div class="item-main">
-        <div class="habit-title-row">
-          <div class="item-title">${escapeHTML(habit.titulo)}</div>
-          <span class="streak-pill" title="Streak atual">🔥 ${Number(habit.streak || 0)}</span>
-        </div>
-        <div class="item-subtitle">${escapeHTML(habit.subtitulo)}</div>
-      </div>
-
-     <div class="habit-actions">
-      <button class="edit-habit-btn" type="button" aria-label="Editar hábito">✎</button>
-      <button class="delete-habit-btn" type="button" aria-label="Excluir hábito">×</button>
-    </div>
-    </li>
-  `
-    )
-    .join('');
-
-  elements.habitList.querySelectorAll('.habit-check').forEach((checkbox) => {
-    checkbox.addEventListener('change', async (event) => {
-      const item = event.target.closest('.habit-item');
-      const habitId = Number(item.dataset.habitId);
-
-      item.classList.toggle('done', event.target.checked);
-
-      try {
-        const payload = await request('/habitos/toggle', {
-          method: 'POST',
-          body: JSON.stringify({ habito_id: habitId }),
-        });
-
-        renderDashboard(payload.dashboard);
-      } catch (error) {
-        event.target.checked = !event.target.checked;
-        item.classList.toggle('done', event.target.checked);
-        showToast(error.message);
-      }
-    });
-  });
-
-  elements.habitList.querySelectorAll('.edit-habit-btn').forEach((button) => {
-    button.addEventListener('click', async (event) => {
-      event.stopPropagation();
-
-      const item = button.closest('.habit-item');
-      const habitId = Number(item.dataset.habitId);
-      const title = item.querySelector('.item-title')?.textContent || '';
-
-      await editHabit(habitId, title);
-    });
-  });
-
-  elements.habitList.querySelectorAll('.delete-habit-btn').forEach((button) => {
-    button.addEventListener('click', async (event) => {
-      event.stopPropagation();
-
-      const item = button.closest('.habit-item');
-      const habitId = Number(item.dataset.habitId);
-
-      await deleteHabit(habitId, item);
-    });
-  });
-}
-
-function renderHabitsChart(rankingData) {
-  if (!elements.habitsChart || typeof Chart === 'undefined') return;
-
-  const ctx = elements.habitsChart.getContext('2d');
-
-  const labels = rankingData.map((item) => item.titulo);
-  const values = rankingData.map((item) => Number(item.porcentagem || 0));
-
-  const colors = rankingData.map((_, index) => {
-    return index % 2 === 0 ? '#11CAA0' : '#BC84EE';
-  });
-
-  if (habitsChartInstance) {
-    habitsChartInstance.destroy();
-  }
-
-  habitsChartInstance = new Chart(ctx, {
+  charts.habitBar = new Chart(elements.habitBarChart.getContext('2d'), {
     type: 'bar',
     data: {
-      labels,
+      labels: series.map((item) => item.titulo),
       datasets: [
         {
-          label: 'Taxa de sucesso',
-          data: values,
-          backgroundColor: colors,
-          borderColor: colors,
-          borderWidth: 0,
+          label: '%',
+          data: series.map((item) => item.percent),
+          backgroundColor: '#BC84EE',
           borderRadius: 999,
-          barThickness: 16,
-          maxBarThickness: 18,
         },
       ],
     },
-    options: getDarkChartOptions({
+    options: baseChartOptions({
       indexAxis: 'y',
-      plugins: {
-        legend: {
-          display: false,
-        },
-        tooltip: {
-          backgroundColor: 'rgba(10, 10, 10, 0.94)',
-          titleColor: '#F5F7FA',
-          bodyColor: '#A2A7B4',
-          borderColor: 'rgba(255,255,255,0.08)',
-          borderWidth: 1,
-          padding: 12,
-          callbacks: {
-            label: (context) => `${context.raw}% de sucesso`,
-          },
-        },
-      },
       scales: {
         x: {
-          display: true,
           min: 0,
           max: 100,
-          ticks: {
-            color: '#777B86',
-            callback: (value) => `${value}%`,
-            font: {
-              family: 'Inter',
-              size: 10,
-              weight: '700',
-            },
-          },
-          grid: {
-            display: false,
-            drawBorder: false,
-          },
-          border: {
-            display: false,
-          },
+          ticks: { color: '#777B86', callback: (v) => `${v}%` },
+          grid: { display: false },
+          border: { display: false },
         },
         y: {
-          display: true,
-          ticks: {
-            color: '#A2A7B4',
-            font: {
-              family: 'Inter',
-              size: 11,
-              weight: '800',
-            },
-          },
-          grid: {
-            display: false,
-            drawBorder: false,
-          },
-          border: {
-            display: false,
-          },
+          ticks: { color: '#A2A7B4' },
+          grid: { display: false },
+          border: { display: false },
         },
       },
     }),
   });
 }
 
-function renderMindset(mindset) {
-  const config = [
-    { key: 'energia', label: 'Energia', icon: '⚡' },
-    { key: 'foco', label: 'Foco', icon: '◎' },
-    { key: 'humor', label: 'Humor', icon: '◌' },
-  ];
+function renderWeekBar() {
+  destroyChart('weekBar');
 
-  elements.mindsetGrid.innerHTML = config
-    .map((item) => {
-      const currentValue = Number(mindset[item.key] || 2);
+  const series = state.stats.weekStats || [];
 
-      return `
-      <article class="mind-card" data-stat="${item.key}">
-        <div class="mind-label">${item.label} <span>${item.icon}</span></div>
-        <div class="mind-value" data-value>${currentValue}</div>
-        <div class="mind-buttons">
-          ${[1, 2, 3]
-            .map(
-              (value) => `
-            <button class="mind-btn ${value === currentValue ? 'active' : ''}" data-value="${value}" type="button">${value}</button>
-          `
-            )
-            .join('')}
-        </div>
-      </article>
-    `;
-    })
-    .join('');
-
-  elements.mindsetGrid.querySelectorAll('.mind-btn').forEach((button) => {
-    button.addEventListener('click', async () => {
-      const card = button.closest('.mind-card');
-      const stat = card.dataset.stat;
-      const value = Number(button.dataset.value);
-
-      const nextMindset = {
-        energia: Number(state.dashboard.mindset.energia),
-        foco: Number(state.dashboard.mindset.foco),
-        humor: Number(state.dashboard.mindset.humor),
-        notas: elements.mindsetNotes ? elements.mindsetNotes.value : '',
-        [stat]: value,
-      };
-
-      try {
-        const payload = await request('/mindset', {
-          method: 'POST',
-          body: JSON.stringify(nextMindset),
-        });
-
-        renderDashboard(payload.dashboard);
-      } catch (error) {
-        showToast(error.message);
-      }
-    });
+  charts.weekBar = new Chart(elements.weekBarChart.getContext('2d'), {
+    type: 'bar',
+    data: {
+      labels: series.map((item) => item.label),
+      datasets: [
+        {
+          label: 'Progresso semanal',
+          data: series.map((item) => item.percent),
+          backgroundColor: '#DEFF9A',
+          borderRadius: 999,
+        },
+      ],
+    },
+    options: baseChartOptions({
+      scales: {
+        y: {
+          min: 0,
+          max: 100,
+          ticks: { color: '#777B86', callback: (v) => `${v}%` },
+          grid: { display: false },
+          border: { display: false },
+        },
+        x: {
+          ticks: { color: '#777B86' },
+          grid: { display: false },
+          border: { display: false },
+        },
+      },
+    }),
   });
-
-  if (elements.mindsetNotes) {
-    elements.mindsetNotes.value = mindset.notas || '';
-  }
 }
 
-async function saveJournal() {
-  if (!state.dashboard?.mindset) return;
-
-  const mindset = state.dashboard.mindset;
-
-  try {
-    const payload = await request('/mindset', {
-      method: 'POST',
-      body: JSON.stringify({
-        energia: Number(mindset.energia),
-        foco: Number(mindset.foco),
-        humor: Number(mindset.humor),
-        notas: elements.mindsetNotes ? elements.mindsetNotes.value : '',
-      }),
-    });
-
-    renderDashboard(payload.dashboard);
-    showToast('Journal salvo.');
-    loadJournalHistory();
-  } catch (error) {
-    showToast(error.message);
-  }
-}
-
-function renderHighlights(dashboard) {
-  const firstPendingTask = dashboard.tarefas.find(
-    (task) => task.status !== 'CONCLUIDO'
+function openModal({
+  title,
+  message,
+  body = '',
+  confirmText = 'Confirmar',
+  confirmClass = 'danger',
+  onConfirm,
+}) {
+  activeModalCallback = onConfirm || null;
+  elements.modalTitle.textContent = title;
+  elements.modalMessage.textContent = message;
+  elements.modalBody.innerHTML = body;
+  elements.modalConfirmBtn.textContent = confirmText;
+  elements.modalConfirmBtn.classList.toggle(
+    'danger',
+    confirmClass === 'danger'
   );
-  const firstPendingHabit = dashboard.habitos.find((habit) => !habit.concluido);
-
-  const items = [
-    {
-      icon: '✓',
-      kind: 'success',
-      title: 'Progresso atual',
-      text: `${dashboard.resumo.totalConcluidos} de ${dashboard.resumo.totalItens} itens concluídos hoje.`,
-    },
-    {
-      icon: '↯',
-      kind: 'action',
-      title: 'Próxima tarefa',
-      text: firstPendingTask
-        ? firstPendingTask.titulo
-        : 'Nenhuma tarefa pendente no momento.',
-    },
-    {
-      icon: '◎',
-      kind: 'focus',
-      title: 'Próximo hábito',
-      text: firstPendingHabit
-        ? firstPendingHabit.titulo
-        : 'Todos os hábitos padrão estão completos.',
-    },
-  ];
-
-  elements.todayHighlights.innerHTML = items
-    .map(
-      (item) => `
-    <div class="highlight-item">
-      <span class="highlight-icon ${item.kind}">${item.icon}</span>
-      <div>
-        <strong>${escapeHTML(item.title)}</strong>
-        <p>${escapeHTML(item.text)}</p>
-      </div>
-    </div>
-  `
-    )
-    .join('');
+  elements.modalConfirmBtn.classList.toggle(
+    'confirm',
+    confirmClass === 'confirm'
+  );
+  elements.modalOverlay.removeAttribute('hidden');
 }
-
-function renderDashboard(dashboard) {
-  state.dashboard = dashboard;
-
-  updateProgress(dashboard.resumo);
-  renderHighlights(dashboard);
-  renderHabits(dashboard.habitos);
-  renderTasks(dashboard.tarefas);
-  renderMindset(dashboard.mindset);
-
-  elements.apiStatus.textContent = 'DB ONLINE';
-}
-
-async function loadDashboard() {
-  try {
-    elements.apiStatus.textContent = 'SYNCING';
-    const dashboard = await request('/dashboard/hoje');
-    renderDashboard(dashboard);
-  } catch (error) {
-    elements.apiStatus.textContent = 'API OFFLINE';
-    showToast(`Falha ao conectar no backend: ${error.message}`);
-  }
-}
-
-async function createTask(event) {
-  event.preventDefault();
-
-  const titulo = elements.taskTitleInput.value.trim();
-  const prioridade = elements.taskPriorityInput.value;
-
-  if (!titulo) {
-    showToast('Digite um título para a tarefa.');
-    return;
-  }
-
-  try {
-    const payload = await request('/tarefas', {
-      method: 'POST',
-      body: JSON.stringify({ titulo, prioridade }),
-    });
-
-    elements.taskTitleInput.value = '';
-    renderDashboard(payload.dashboard);
-    showToast('Tarefa salva no SQLite.');
-  } catch (error) {
-    showToast(error.message);
-  }
-}
-
-let activeModalCallback = null;
 
 function closeModal() {
-  if (!elements.modalOverlay) return;
-
   elements.modalOverlay.setAttribute('hidden', '');
-  elements.modalInputWrap?.setAttribute('hidden', '');
-  elements.modalInput.value = '';
+  elements.modalBody.innerHTML = '';
   activeModalCallback = null;
 }
 
-function showConfirmModal(mensagem, callback) {
-  if (!elements.modalOverlay) return;
-
-  activeModalCallback = callback;
-
-  elements.modalTitle.textContent = 'Confirmar ação';
-  elements.modalMessage.textContent = mensagem;
-  elements.modalConfirmBtn.textContent = 'Confirmar';
-  elements.modalConfirmBtn.classList.remove('confirm');
-  elements.modalConfirmBtn.classList.add('danger');
-  elements.modalInputWrap.setAttribute('hidden', '');
-  elements.modalInput.value = '';
-
-  elements.modalOverlay.removeAttribute('hidden');
+function formValue(name) {
+  const input = elements.modalBody.querySelector(`[name="${name}"]`);
+  if (!input) return '';
+  if (input.type === 'checkbox') return input.checked;
+  return input.value;
 }
 
-function showEditModal({
-  title,
-  message,
-  initialValue = '',
-  confirmText = 'Salvar',
-  onConfirm,
-}) {
-  if (!elements.modalOverlay) return;
+function openHabitModal(habit = null, defaults = {}) {
+  const isEdit = Boolean(habit);
+  const dataInicio = isEdit
+    ? habit.data_inicio || ''
+    : defaults.data_inicio || '';
+  const dataFim = isEdit ? habit.data_fim || '' : '';
 
-  activeModalCallback = () => {
-    const value = elements.modalInput.value.trim();
+  openModal({
+    title: isEdit ? 'Editar hábito' : 'Criar hábito',
+    message: isEdit
+      ? 'Atualize o hábito sem perder histórico.'
+      : 'Crie um hábito para o Habit Matrix.',
+    confirmText: isEdit ? 'Salvar' : 'Criar',
+    confirmClass: 'confirm',
+    body: `
+      <div class="modal-form">
+        <label>Nome<input name="titulo" type="text" value="${escapeHTML(habit?.titulo || '')}" placeholder="Ex: Projeto pessoal" /></label>
+        <label>Descrição<input name="subtitulo" type="text" value="${escapeHTML(habit?.subtitulo || '')}" placeholder="Descrição curta" /></label>
+        <label>Cor<input name="cor" type="color" value="${escapeHTML(habit?.cor || '#11caa0')}" /></label>
+        <label>Data início<input name="data_inicio" type="date" value="${escapeHTML(dataInicio)}" /></label>
+        <label>Data fim<input name="data_fim" type="date" value="${escapeHTML(dataFim)}" /></label>
+        <label class="check-row"><input name="ativo" type="checkbox" ${habit?.ativo === false ? '' : 'checked'} /> Ativo</label>
+      </div>
+    `,
+    onConfirm: async () => {
+      const payload = {
+        titulo: formValue('titulo'),
+        subtitulo: formValue('subtitulo'),
+        cor: formValue('cor'),
+        data_inicio: formValue('data_inicio') || null,
+        data_fim: formValue('data_fim') || null,
+        ativo: formValue('ativo'),
+      };
 
-    if (!value) {
-      showToast('O campo não pode ficar vazio.');
-      return false;
-    }
-
-    onConfirm(value);
-    return true;
-  };
-
-  elements.modalTitle.textContent = title;
-  elements.modalMessage.textContent = message;
-  elements.modalConfirmBtn.textContent = confirmText;
-  elements.modalConfirmBtn.classList.remove('danger');
-  elements.modalConfirmBtn.classList.add('confirm');
-
-  elements.modalInputWrap.removeAttribute('hidden');
-  elements.modalInput.value = initialValue;
-
-  elements.modalOverlay.removeAttribute('hidden');
-
-  window.setTimeout(() => {
-    elements.modalInput.focus();
-    elements.modalInput.select();
-  }, 50);
-}
-
-document.addEventListener('DOMContentLoaded', () => {
-  elements.navItems.forEach((item) => {
-    item.addEventListener('click', () => navigateTo(item.dataset.route));
-  });
-
-  injectTemporalAnchors();
-
-  if (elements.exportObsidianBtn) {
-    elements.exportObsidianBtn.addEventListener('click', exportTodayToObsidian);
-  }
-
-  if (elements.journalFeed) {
-    elements.journalFeed.addEventListener('click', (event) => {
-      const button = event.target.closest('.journal-download-btn');
-
-      if (!button) return;
-
-      event.stopPropagation();
-
-      const dateISO = button.dataset.exportDate;
-
-      if (!dateISO) {
-        showToast('Data inválida para exportação.');
-        return;
+      if (!payload.titulo.trim()) {
+        showToast('Nome obrigatório.');
+        return false;
       }
 
-      exportDateToObsidian(dateISO);
-    });
-  }
-
-  if (elements.backupBtn) {
-    elements.backupBtn.addEventListener('click', () => {
-      window.open('/api/backup', '_blank');
-    });
-  }
-
-  if (elements.lockinStartBtn) {
-    elements.lockinStartBtn.addEventListener('click', startLockinTimer);
-  }
-
-  if (elements.lockinPauseBtn) {
-    elements.lockinPauseBtn.addEventListener('click', pauseLockinTimer);
-  }
-
-  if (elements.lockinResetBtn) {
-    elements.lockinResetBtn.addEventListener('click', resetLockinTimer);
-  }
-
-  if (elements.habitForm) {
-    elements.habitForm.addEventListener('submit', (event) => {
-      event.preventDefault();
-      addHabit(elements.habitTitleInput.value);
-    });
-  }
-
-  if (elements.saveJournalBtn) {
-    elements.saveJournalBtn.addEventListener('click', saveJournal);
-  }
-
-  if (elements.taskHistoryBtn) {
-    elements.taskHistoryBtn.addEventListener('click', loadTaskHistory);
-  }
-
-  if (elements.reloadJournalBtn) {
-    elements.reloadJournalBtn.addEventListener('click', loadJournalHistory);
-  }
-
-  if (elements.modalCancelBtn) {
-    elements.modalCancelBtn.addEventListener('click', closeModal);
-  }
-
-  if (elements.modalOverlay) {
-    elements.modalOverlay.addEventListener('click', (event) => {
-      if (event.target === elements.modalOverlay) {
-        closeModal();
-      }
-    });
-  }
-
-  if (elements.modalConfirmBtn) {
-    elements.modalConfirmBtn.addEventListener('click', async () => {
-      if (!activeModalCallback) {
-        closeModal();
-        return;
-      }
-
-      const shouldClose = await activeModalCallback();
-
-      if (shouldClose !== false) {
-        closeModal();
-      }
-    });
-  }
-  if (elements.restoreDbBtn && elements.restoreDbInput) {
-    elements.restoreDbBtn.addEventListener('click', () => {
-      elements.restoreDbInput.click();
-    });
-
-    elements.restoreDbInput.addEventListener('change', () => {
-      const file = elements.restoreDbInput.files?.[0];
-
-      if (!file) return;
-
-      restoreDatabase(file);
-    });
-  }
-  elements.lockinPresetButtons.forEach((button) => {
-    button.addEventListener('click', () => {
-      handleLockinPresetClick(button);
-    });
-  });
-
-  if (elements.lockinCustomInput) {
-    elements.lockinCustomInput.addEventListener('change', () => {
-      if (lockinRunning) {
-        showToast('Pause o Lock In antes de mudar o tempo.');
-        return;
-      }
-
-      setLockinDuration(elements.lockinCustomInput.value);
-    });
-
-    elements.lockinCustomInput.addEventListener('input', () => {
-      if (!lockinRunning) {
-        setLockinDuration(elements.lockinCustomInput.value);
-      }
-    });
-  }
-
-  document.addEventListener('keydown', (event) => {
-    if (
-      event.key === 'Escape' &&
-      elements.modalOverlay &&
-      !elements.modalOverlay.hasAttribute('hidden')
-    ) {
-      closeModal();
-    }
-  });
-
-  renderLockinTimer();
-
-  elements.taskForm.addEventListener('submit', createTask);
-
-  navigateTo('cockpit');
-  loadDashboard();
-  loadJournalHistory();
-});
-
-async function loadEstatisticas() {
-  try {
-    const estatisticas = await request('/estatisticas');
-
-    await renderWeeklyGrid();
-    renderHeatmapFromData(estatisticas.heatmap || []);
-    renderProgressChart(estatisticas.heatmap || []);
-    renderHabitsChart(estatisticas.rankingHabitos || []);
-    renderMindsetChart(estatisticas.mindset || []);
-
-    estatisticasLoaded = true;
-  } catch (error) {
-    showToast(`Erro ao carregar estatísticas: ${error.message}`);
-  }
-}
-
-function renderHeatmapFromData(heatmap) {
-  if (!elements.heatmapGrid) return;
-
-  elements.heatmapGrid.innerHTML = '';
-
-  heatmap.forEach((day) => {
-    const cell = document.createElement('span');
-    const percent = Number(day.porcentagem || 0);
-
-    cell.title = `${day.data} · ${day.totalConcluido}/${day.totalItens} · ${percent}%`;
-
-    if (percent <= 0) {
-      cell.style.background = 'rgba(255,255,255,0.045)';
-      cell.style.boxShadow = 'inset 0 1px 0 rgba(255,255,255,0.035)';
-    } else if (percent < 100) {
-      const opacity = 0.1 + (percent / 100) * 0.28;
-
-      cell.style.background = `rgba(222, 255, 154, ${opacity})`;
-      cell.style.boxShadow = '0 0 14px rgba(222, 255, 154, 0.10)';
-    } else {
-      cell.style.background = '#DEFF9A';
-      cell.style.boxShadow = 'var(--glow-success)';
-    }
-
-    elements.heatmapGrid.appendChild(cell);
-  });
-}
-
-function renderMindsetChart(mindset) {
-  if (!elements.mindsetChart || typeof Chart === 'undefined') return;
-
-  const ctx = elements.mindsetChart.getContext('2d');
-
-  const labels = mindset.map((item) => {
-    const [, month, day] = item.data_registro.split('-');
-    return `${day}/${month}`;
-  });
-
-  const energia = mindset.map((item) => Number(item.energia));
-  const foco = mindset.map((item) => Number(item.foco));
-  const humor = mindset.map((item) => Number(item.humor));
-
-  if (mindsetChartInstance) {
-    mindsetChartInstance.destroy();
-  }
-
-  mindsetChartInstance = new Chart(ctx, {
-    type: 'line',
-    data: {
-      labels,
-      datasets: [
-        {
-          label: 'Energia',
-          data: energia,
-          borderColor: '#DEFF9A',
-          backgroundColor: 'rgba(222, 255, 154, 0.08)',
-          pointBackgroundColor: '#DEFF9A',
-          pointBorderColor: '#000000',
-          pointRadius: 3,
-          pointHoverRadius: 6,
-          borderWidth: 3,
-          tension: 0.4,
-        },
-        {
-          label: 'Foco',
-          data: foco,
-          borderColor: '#BC84EE',
-          backgroundColor: 'rgba(188, 132, 238, 0.08)',
-          pointBackgroundColor: '#BC84EE',
-          pointBorderColor: '#000000',
-          pointRadius: 3,
-          pointHoverRadius: 6,
-          borderWidth: 3,
-          tension: 0.4,
-        },
-        {
-          label: 'Humor',
-          data: humor,
-          borderColor: '#11CAA0',
-          backgroundColor: 'rgba(17, 202, 160, 0.08)',
-          pointBackgroundColor: '#11CAA0',
-          pointBorderColor: '#000000',
-          pointRadius: 3,
-          pointHoverRadius: 6,
-          borderWidth: 3,
-          tension: 0.4,
-        },
-      ],
-    },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      animation: {
-        duration: 650,
-        easing: 'easeOutQuart',
-      },
-      interaction: {
-        intersect: false,
-        mode: 'index',
-      },
-      plugins: {
-        legend: {
-          display: true,
-          labels: {
-            color: '#A2A7B4',
-            boxWidth: 10,
-            boxHeight: 10,
-            usePointStyle: true,
-            pointStyle: 'circle',
-            font: {
-              family: 'Inter',
-              size: 11,
-              weight: '800',
-            },
-          },
-        },
-        tooltip: {
-          backgroundColor: 'rgba(10, 10, 10, 0.94)',
-          titleColor: '#F5F7FA',
-          bodyColor: '#A2A7B4',
-          borderColor: 'rgba(255,255,255,0.08)',
-          borderWidth: 1,
-          padding: 12,
-          displayColors: true,
-        },
-      },
-      scales: {
-        x: {
-          display: false,
-          grid: {
-            display: false,
-            drawBorder: false,
-          },
-        },
-        y: {
-          display: false,
-          min: 1,
-          max: 3,
-          ticks: {
-            stepSize: 1,
-          },
-          grid: {
-            display: false,
-            drawBorder: false,
-          },
-        },
-      },
-    },
-  });
-}
-
-async function deleteTask(taskId, itemElement) {
-  showConfirmModal(
-    'Tem certeza que deseja excluir? Isso apagará todo o histórico associado.',
-    async () => {
-      try {
-        itemElement.classList.add('removing');
-
-        await request(`/tarefas/${taskId}`, {
-          method: 'DELETE',
+      if (isEdit) {
+        await api(`/habits/${habit.id}`, {
+          method: 'PATCH',
+          body: JSON.stringify(payload),
         });
-
-        window.setTimeout(() => {
-          itemElement.remove();
-
-          if (state.dashboard) {
-            state.dashboard.tarefas = state.dashboard.tarefas.filter(
-              (task) => Number(task.id) !== Number(taskId)
-            );
-
-            recalculateLocalSummary();
-            updateProgress(state.dashboard.resumo);
-            renderHighlights(state.dashboard);
-            elements.taskCountChip.textContent = `${state.dashboard.tarefas.length} Ops`;
-
-            if (!state.dashboard.tarefas.length) {
-              elements.taskList.innerHTML = `<li class="empty-state">Nenhuma tarefa cadastrada para hoje.</li>`;
-            }
-          }
-
-          showToast('Tarefa excluída.');
-        }, 220);
-      } catch (error) {
-        itemElement.classList.remove('removing');
-        showToast(error.message);
+        showToast('Hábito atualizado.');
+      } else {
+        await api('/habits', { method: 'POST', body: JSON.stringify(payload) });
+        showToast('Hábito criado.');
       }
-    }
+
+      await refreshAll();
+      return true;
+    },
+  });
+}
+
+function openTaskModal(task = null, defaults = {}) {
+  const isEdit = Boolean(task);
+
+  openModal({
+    title: isEdit ? 'Editar tarefa' : 'Criar tarefa',
+    message: isEdit
+      ? 'Atualize a tarefa pontual sem perder histórico.'
+      : 'A tarefa será vinculada ao dia escolhido.',
+    confirmText: isEdit ? 'Salvar' : 'Criar',
+    confirmClass: 'confirm',
+    body: `
+      <div class="modal-form">
+        <label>Título<input name="titulo" type="text" value="${escapeHTML(task?.titulo || '')}" placeholder="Nome da tarefa" /></label>
+        <label>Descrição<textarea name="descricao" placeholder="Detalhes opcionais">${escapeHTML(task?.descricao || '')}</textarea></label>
+        <label>Prioridade
+          <select name="prioridade">
+            ${['ALTA', 'MÉDIA', 'BAIXA'].map((priority) => `<option value="${priority}" ${priority === (task?.prioridade || 'MÉDIA') ? 'selected' : ''}>${priority}</option>`).join('')}
+          </select>
+        </label>
+        <label>Data<input name="data_ref" type="date" value="${escapeHTML(task?.data_ref || defaults.data_ref || state.selectedDate)}" /></label>
+      </div>
+    `,
+    onConfirm: async () => {
+      const payload = {
+        titulo: formValue('titulo'),
+        descricao: formValue('descricao'),
+        prioridade: formValue('prioridade'),
+        data_ref: formValue('data_ref') || state.selectedDate,
+      };
+
+      if (!payload.titulo.trim()) {
+        showToast('Título obrigatório.');
+        return false;
+      }
+
+      if (isEdit) {
+        await api(`/tasks/${task.id}`, {
+          method: 'PATCH',
+          body: JSON.stringify(payload),
+        });
+        showToast('Tarefa atualizada.');
+      } else {
+        await api('/tasks', { method: 'POST', body: JSON.stringify(payload) });
+        showToast('Tarefa criada.');
+      }
+
+      state.selectedDate = payload.data_ref;
+      state.currentMonth = payload.data_ref.slice(0, 7);
+      state.selectedWeekStart = getWeekStart(payload.data_ref);
+      await refreshAll();
+      return true;
+    },
+  });
+}
+
+function getTaskById(id) {
+  const fromDay = state.day?.tasks?.find(
+    (task) => Number(task.id) === Number(id)
+  );
+  if (fromDay) return fromDay;
+
+  const tasksByDate = state.dashboard?.tasksByDate || {};
+  for (const tasks of Object.values(tasksByDate)) {
+    const found = tasks.find((task) => Number(task.id) === Number(id));
+    if (found) return found;
+  }
+
+  return null;
+}
+
+function getHabitById(id) {
+  return (
+    state.dashboard?.habits?.find((habit) => Number(habit.id) === Number(id)) ||
+    null
   );
 }
 
-function recalculateLocalSummary() {
-  const habitos = state.dashboard?.habitos || [];
-  const tarefas = state.dashboard?.tarefas || [];
+async function toggleHabit(habitId, date, nextValue = null) {
+  const current = state.dashboard?.logMap?.[`${habitId}:${date}`] === true;
+  const concluido = nextValue === null ? !current : Boolean(nextValue);
 
-  const habitosConcluidos = habitos.filter((habit) => habit.concluido).length;
-  const tarefasConcluidas = tarefas.filter(
-    (task) => task.status === 'CONCLUIDO'
-  ).length;
+  await api(`/habits/${habitId}/log`, {
+    method: 'PUT',
+    body: JSON.stringify({ data_ref: date, concluido }),
+  });
 
-  const totalItens = habitos.length + tarefas.length;
-  const totalConcluidos = habitosConcluidos + tarefasConcluidas;
-
-  state.dashboard.resumo = {
-    totalItens,
-    totalConcluidos,
-    restantes: Math.max(totalItens - totalConcluidos, 0),
-    habitosConcluidos,
-    tarefasConcluidas,
-    porcentagem:
-      totalItens === 0 ? 0 : Math.round((totalConcluidos / totalItens) * 100),
-  };
+  showToast(concluido ? 'Hábito marcado.' : 'Hábito desmarcado.');
+  await refreshAll();
 }
 
-async function loadTaskHistory({ append = false } = {}) {
-  if (!elements.taskHistoryList || !elements.taskHistoryBtn) return;
+async function toggleTask(taskId) {
+  const task = getTaskById(taskId);
+  if (!task) return;
 
-  const pagination = paginationState.taskHistory;
-  const isHidden = elements.taskHistoryList.hasAttribute('hidden');
+  const nextStatus = task.status === 'CONCLUIDO' ? 'PENDENTE' : 'CONCLUIDO';
 
-  if (isHidden && !append) {
-    elements.taskHistoryList.removeAttribute('hidden');
-    elements.taskHistoryBtn.textContent = 'Ocultar Histórico';
-  } else if (
-    !isHidden &&
-    !append &&
-    elements.taskHistoryList.dataset.open === 'true'
-  ) {
-    elements.taskHistoryList.setAttribute('hidden', '');
-    elements.taskHistoryBtn.textContent = 'Ver Histórico';
-    elements.taskHistoryList.dataset.open = 'false';
+  await api(`/tasks/${taskId}/status`, {
+    method: 'PUT',
+    body: JSON.stringify({ status: nextStatus }),
+  });
+
+  showToast(
+    nextStatus === 'CONCLUIDO' ? 'Tarefa concluída.' : 'Tarefa reaberta.'
+  );
+  await refreshAll();
+}
+
+function deleteTask(taskId) {
+  openModal({
+    title: 'Excluir tarefa',
+    message:
+      'Tem certeza que deseja excluir esta tarefa? Ela será ocultada, preservando o histórico interno.',
+    confirmText: 'Excluir',
+    confirmClass: 'danger',
+    onConfirm: async () => {
+      await api(`/tasks/${taskId}`, { method: 'DELETE' });
+      showToast('Tarefa excluída.');
+      await refreshAll();
+      return true;
+    },
+  });
+}
+
+function deleteHabit(habitId) {
+  openModal({
+    title: 'Excluir hábito',
+    message:
+      'Tem certeza que deseja excluir este hábito? Ele será desativado e os logs antigos serão preservados.',
+    confirmText: 'Excluir',
+    confirmClass: 'danger',
+    onConfirm: async () => {
+      await api(`/habits/${habitId}`, { method: 'DELETE' });
+      showToast('Hábito desativado.');
+      await refreshAll();
+      return true;
+    },
+  });
+}
+
+async function saveMindsetFromTracker() {
+  const current = state.day?.mindset || {};
+  const payload = {
+    energia: Number(current.energia || 2),
+    foco: Number(current.foco || 2),
+    motivacao: Number(current.motivacao || 2),
+    humor: Number(current.humor || 2),
+    notas: elements.trackerNotes.value,
+  };
+
+  await api(`/mindset/${state.selectedDate}`, {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  });
+
+  showToast('Check-in salvo.');
+  await refreshAll();
+}
+
+async function setMindsetValue(stat, value) {
+  const current = state.day?.mindset || {};
+  const payload = {
+    energia: Number(current.energia || 2),
+    foco: Number(current.foco || 2),
+    motivacao: Number(current.motivacao || 2),
+    humor: Number(current.humor || 2),
+    notas: elements.trackerNotes?.value ?? current.notas ?? '',
+    [stat]: Number(value),
+  };
+
+  await api(`/mindset/${state.selectedDate}`, {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  });
+
+  await refreshAll();
+}
+
+async function loadJournal() {
+  const month = elements.journalMonthFilter.value || state.currentMonth;
+  const q = encodeURIComponent(elements.journalSearch.value || '');
+  const payload = await api(`/checkins?month=${month}&q=${q}`);
+
+  elements.journalList.innerHTML = payload.items.length
+    ? payload.items.map(renderJournalCard).join('')
+    : '<div class="empty-state">Nenhum check-in neste mês.</div>';
+}
+
+function renderJournalCard(item) {
+  const text = item.notas ? item.notas.slice(0, 220) : 'Sem nota.';
+
+  return `
+    <article class="history-card" data-date="${item.data_ref}">
+      <div class="history-card-top">
+        <strong>${formatShortDate(item.data_ref)}</strong>
+        <div class="journal-actions">
+          <button class="row-link open-journal" data-date="${item.data_ref}" type="button">Abrir / Editar</button>
+          <button class="row-link copy-md" data-date="${item.data_ref}" type="button">Copiar MD</button>
+          <button class="row-link download-md" data-date="${item.data_ref}" type="button">Baixar .md</button>
+        </div>
+      </div>
+      <div class="history-metrics">
+        <span>E ${item.energia}/5</span>
+        <span>F ${item.foco}/5</span>
+        <span>M ${item.motivacao}/5</span>
+        <span>H ${item.humor}/5</span>
+      </div>
+      <p>${escapeHTML(text)}</p>
+    </article>
+  `;
+}
+
+async function openJournalDetail(date) {
+  await selectDate(date, { skipMonth: false });
+
+  const day = state.day;
+
+  elements.journalDetail.innerHTML = `
+    <div class="detail-card">
+      <div class="panel-header compact-header">
+        <div>
+          <div class="panel-kicker">${formatShortDate(date)}</div>
+          <h2 class="panel-title">Check-in completo</h2>
+        </div>
+        <div class="journal-actions">
+          <button class="mini-action copy-md" data-date="${date}" type="button">Copiar MD</button>
+          <button class="mini-action download-md" data-date="${date}" type="button">Baixar .md</button>
+          <button class="mini-action" data-view="tracker" type="button">Editar no Tracker</button>
+        </div>
+      </div>
+
+      <div class="history-metrics large">
+        <span>Energy ${day.mindset.energia}/5</span>
+        <span>Focus ${day.mindset.foco}/5</span>
+        <span>Motivation ${day.mindset.motivacao}/5</span>
+        <span>Mood ${day.mindset.humor}/5</span>
+      </div>
+
+      <p class="note-full">${escapeHTML(day.mindset.notas || 'Sem nota.')}</p>
+    </div>
+  `;
+}
+
+async function getMarkdown(date = state.selectedDate) {
+  const payload = await api(`/day/${date}/export-md`);
+  return payload.markdown;
+}
+
+async function exportMarkdown(mode, date = state.selectedDate) {
+  const markdown = await getMarkdown(date);
+
+  if (mode === 'copy') {
+    await navigator.clipboard.writeText(markdown);
+    showToast('Markdown copiado.');
     return;
   }
 
-  elements.taskHistoryList.dataset.open = 'true';
-
-  if (pagination.loading) return;
-
-  if (!append) {
-    pagination.page = 1;
-    elements.taskHistoryList.innerHTML = '';
-  }
-
-  pagination.loading = true;
-
-  try {
-    const payload = await request(
-      `/tarefas/historico?page=${pagination.page}&limit=${pagination.limit}`
-    );
-
-    const tarefas = payload.tarefas || [];
-
-    if (!append && !tarefas.length) {
-      elements.taskHistoryList.innerHTML = `
-        <div class="empty-state">Nenhuma tarefa antiga encontrada.</div>
-      `;
-      pagination.hasMore = false;
-      return;
-    }
-
-    const existingLoadMore = elements.taskHistoryList.querySelector(
-      '.task-history-load-more'
-    );
-    if (existingLoadMore) existingLoadMore.remove();
-
-    const html = tarefas
-      .map((task) => {
-        const done = task.status === 'CONCLUIDO';
-
-        return `
-          <div class="history-item ${done ? 'done' : ''}">
-            <div class="history-date">${escapeHTML(task.data_criacao)}</div>
-            <div class="history-title">${escapeHTML(task.titulo)}</div>
-            <div class="history-status">${escapeHTML(task.status)}</div>
-          </div>
-        `;
-      })
-      .join('');
-
-    elements.taskHistoryList.insertAdjacentHTML('beforeend', html);
-
-    pagination.hasMore = Boolean(payload.hasMore);
-    pagination.page = payload.nextPage || pagination.page;
-
-    if (pagination.hasMore) {
-      elements.taskHistoryList.insertAdjacentHTML(
-        'beforeend',
-        `
-        <button class="task-history-load-more load-more-btn" type="button">
-          Carregar Mais
-        </button>
-        `
-      );
-
-      elements.taskHistoryList
-        .querySelector('.task-history-load-more')
-        .addEventListener('click', () => loadTaskHistory({ append: true }));
-    }
-  } catch (error) {
-    showToast(error.message);
-  } finally {
-    pagination.loading = false;
-  }
+  const blob = new Blob([markdown], { type: 'text/markdown;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = `${date}-QuietProgress.md`;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+  showToast('Markdown baixado.');
 }
 
-async function loadJournalHistory({ append = false } = {}) {
-  if (!elements.journalFeed) return;
-
-  const pagination = paginationState.journal;
-
-  if (pagination.loading) return;
-
-  if (!append) {
-    pagination.page = 1;
-    elements.journalFeed.innerHTML = '';
-  }
-
-  pagination.loading = true;
-
-  try {
-    const payload = await request(
-      `/mindset/historico?page=${pagination.page}&limit=${pagination.limit}`
-    );
-
-    const registros = payload.registros || [];
-
-    if (!append && !registros.length) {
-      elements.journalFeed.innerHTML = `
-        <div class="journal-empty">Nenhuma reflexão salva ainda.</div>
-      `;
-      pagination.hasMore = false;
-      return;
-    }
-
-    const cards = registros
-      .map((entry) => {
-        const [year, month, day] = entry.data_registro.split('-');
-        const formattedDate = `${day}/${month}/${year}`;
-
-        return `
-      <article class="journal-card">
-        <div class="journal-card-top">
-          <div class="journal-date">${escapeHTML(formattedDate)}</div>
-
-          <button
-            class="journal-download-btn"
-            type="button"
-            data-export-date="${escapeHTML(entry.data_registro)}"
-            aria-label="Exportar journal de ${escapeHTML(formattedDate)} para Markdown"
-          >
-            ↓ MD
-          </button>
-        </div>
-
-        <div class="journal-text">${escapeHTML(entry.notas)}</div>
-      </article>
-    `;
-      })
-      .join('');
-
-    const existingLoadMore =
-      elements.journalFeed.querySelector('.journal-load-more');
-
-    if (existingLoadMore) {
-      existingLoadMore.remove();
-    }
-
-    elements.journalFeed.insertAdjacentHTML('beforeend', cards);
-
-    pagination.hasMore = Boolean(payload.hasMore);
-    pagination.page = payload.nextPage || pagination.page;
-
-    if (pagination.hasMore) {
-      elements.journalFeed.insertAdjacentHTML(
-        'beforeend',
-        `
-    <button class="journal-load-more load-more-btn" type="button">
-      Carregar Mais
-    </button>
-    `
-      );
-
-      elements.journalFeed
-        .querySelector('.journal-load-more')
-        .addEventListener('click', () => loadJournalHistory({ append: true }));
-    }
-  } catch (error) {
-    showToast(error.message);
-  } finally {
-    pagination.loading = false;
-  }
+function downloadBackup() {
+  window.open('/api/backup', '_blank');
 }
 
-async function renderWeeklyGrid() {
-  if (!elements.weeklyTracker) return;
-
-  try {
-    const payload = await request('/habitos/semana');
-    const habitos = payload.habitos || [];
-    const datas = payload.datas || [];
-
-    if (!habitos.length) {
-      elements.weeklyTracker.innerHTML = `
-        <div class="weekly-empty">Nenhum hábito cadastrado.</div>
-      `;
-      return;
-    }
-
-    const dayLabels = datas.map((date) => {
-      const parsed = new Date(`${date}T00:00:00`);
-      return parsed
-        .toLocaleDateString('pt-BR', {
-          weekday: 'short',
-        })
-        .replace('.', '');
-    });
-
-    const header = `
-      <div class="weekly-row header">
-        <div>Hábito</div>
-        ${dayLabels
-          .map(
-            (label) =>
-              `<div class="weekly-day-label">${escapeHTML(label)}</div>`
-          )
-          .join('')}
-      </div>
-    `;
-
-    const rows = habitos
-      .map((habit) => {
-        return `
-          <div class="weekly-row">
-            <div class="weekly-habit-name">${escapeHTML(habit.nome)}</div>
-            ${(habit.ultimos7Dias || [])
-              .map((done, index) => {
-                const date = datas[index] || '';
-                const title = `${habit.nome} · ${date} · ${done ? 'concluído' : 'pendente'}`;
-
-                return `
-                  <span
-                    class="weekly-cell ${done ? 'done' : 'miss'}"
-                    title="${escapeHTML(title)}"
-                  ></span>
-                `;
-              })
-              .join('')}
-          </div>
-        `;
-      })
-      .join('');
-
-    elements.weeklyTracker.innerHTML = header + rows;
-  } catch (error) {
-    showToast(error.message);
-  }
-}
-
-async function editTask(taskId, currentTitle) {
-  showEditModal({
-    title: 'Editar tarefa',
-    message: 'Renomeie a tarefa sem perder seu histórico operacional.',
-    initialValue: currentTitle,
-    confirmText: 'Salvar',
-    onConfirm: async (newTitle) => {
-      try {
-        const payload = await request(`/tarefas/${taskId}`, {
-          method: 'PATCH',
-          body: JSON.stringify({
-            titulo: newTitle,
-          }),
-        });
-
-        renderDashboard(payload.dashboard);
-        showToast('Tarefa atualizada.');
-      } catch (error) {
-        showToast(error.message);
-      }
-    },
-  });
-}
-
-async function editHabit(habitId, currentTitle) {
-  showEditModal({
-    title: 'Editar hábito',
-    message: 'Renomeie o hábito mantendo streaks e histórico intactos.',
-    initialValue: currentTitle,
-    confirmText: 'Salvar',
-    onConfirm: async (newTitle) => {
-      try {
-        const payload = await request(`/habitos/${habitId}`, {
-          method: 'PATCH',
-          body: JSON.stringify({
-            titulo: newTitle,
-          }),
-        });
-
-        renderDashboard(payload.dashboard);
-        showToast('Hábito atualizado.');
-      } catch (error) {
-        showToast(error.message);
-      }
-    },
-  });
-}
-
-async function restoreDatabase(file) {
+function restoreDatabase(file) {
   if (!file) return;
 
-  showConfirmModal(
-    'Restaurar este arquivo irá sobrescrever todos os dados atuais. Faça backup antes de continuar. Deseja prosseguir?',
-    async () => {
-      try {
-        const formData = new FormData();
-        formData.append('database', file);
+  openModal({
+    title: 'Restaurar banco',
+    message:
+      'Isso vai substituir o banco atual. Faça backup antes de continuar.',
+    confirmText: 'Restaurar',
+    confirmClass: 'danger',
+    onConfirm: async () => {
+      const formData = new FormData();
+      formData.append('database', file);
 
-        const response = await fetch('/api/sistema/restore', {
-          method: 'POST',
-          body: formData,
-        });
+      const response = await fetch('/api/sistema/restore', {
+        method: 'POST',
+        body: formData,
+      });
 
-        const payload = await response.json().catch(() => ({}));
+      const payload = await response.json().catch(() => ({}));
 
-        if (!response.ok) {
-          throw new Error(payload.error || 'Erro ao restaurar banco.');
-        }
-
-        showToast('Banco restaurado. Recarregando...');
-        window.setTimeout(() => {
-          window.location.reload();
-        }, 900);
-      } catch (error) {
-        showToast(error.message);
-      } finally {
-        elements.restoreDbInput.value = '';
+      if (!response.ok) {
+        throw new Error(payload.error || 'Erro ao restaurar banco.');
       }
-    }
-  );
+
+      showToast('Banco restaurado. Recarregando...');
+      window.setTimeout(() => window.location.reload(), 900);
+      return true;
+    },
+  });
+}
+
+async function loadHealth() {
+  const payload = await api('/health');
+  state.health = payload;
+
+  elements.healthBox.innerHTML = `
+    <strong>Status:</strong> ${payload.status}<br>
+    <strong>Uptime:</strong> ${payload.uptime}s<br>
+    <strong>Node:</strong> ${payload.node}<br>
+    <strong>Platform:</strong> ${payload.platform} ${payload.arch}<br>
+    <strong>DB:</strong> ${payload.databasePath}<br>
+    <strong>DB existe:</strong> ${payload.databaseExists ? 'sim' : 'não'}<br>
+    <strong>Memória heap:</strong> ${Math.round(payload.memory.heapUsed / 1024 / 1024)} MB
+  `;
 }
 
 function setLockinDuration(minutes) {
-  const safeMinutes = Math.min(Math.max(Number(minutes) || 25, 1), 180);
-
-  lockinInitialSeconds = safeMinutes * 60;
+  const safe = Math.min(Math.max(Number(minutes) || 25, 1), 180);
+  lockinInitialSeconds = safe * 60;
 
   if (!lockinRunning) {
     lockinRemainingSeconds = lockinInitialSeconds;
@@ -1699,238 +1345,304 @@ function setLockinDuration(minutes) {
   }
 }
 
-function handleLockinPresetClick(button) {
-  if (lockinRunning) {
-    showToast('Pause o Lock In antes de mudar o tempo.');
-    return;
-  }
-
-  elements.lockinPresetButtons.forEach((preset) => {
-    preset.classList.remove('active');
-  });
-
-  button.classList.add('active');
-
-  const isCustom = button.dataset.custom === 'true';
-
-  if (elements.lockinCustomWrap) {
-    elements.lockinCustomWrap.toggleAttribute('hidden', !isCustom);
-  }
-
-  if (isCustom) {
-    const customMinutes = Number(elements.lockinCustomInput?.value || 25);
-    setLockinDuration(customMinutes);
-
-    window.setTimeout(() => {
-      elements.lockinCustomInput?.focus();
-      elements.lockinCustomInput?.select();
-    }, 50);
-
-    return;
-  }
-
-  setLockinDuration(Number(button.dataset.minutes));
+function renderLockinTimer() {
+  const minutes = Math.floor(lockinRemainingSeconds / 60);
+  const seconds = lockinRemainingSeconds % 60;
+  elements.lockinTime.textContent = `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
 }
 
-function capitalizeFirstLetter(text) {
-  if (!text) return '';
+function startLockinTimer() {
+  if (lockinRunning) return;
 
-  return text.charAt(0).toUpperCase() + text.slice(1);
-}
+  lockinRunning = true;
+  document.body.classList.add('focus-mode');
 
-function titleCaseDatePart(text) {
-  return String(text)
-    .split(' ')
-    .map((part) => capitalizeFirstLetter(part))
-    .join(' ');
-}
+  lockinInterval = window.setInterval(() => {
+    lockinRemainingSeconds -= 1;
 
-function getTodayISOForFile() {
-  const date = new Date();
-
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-
-  return `${year}-${month}-${day}`;
-}
-
-function getTodayLabelPTBR() {
-  const date = new Date();
-
-  const weekday = titleCaseDatePart(
-    date.toLocaleDateString('pt-BR', {
-      weekday: 'long',
-    })
-  );
-
-  const day = String(date.getDate()).padStart(2, '0');
-
-  const month = titleCaseDatePart(
-    date.toLocaleDateString('pt-BR', {
-      month: 'long',
-    })
-  );
-
-  return `${weekday}, ${day} de ${month}`;
-}
-
-function injectTemporalAnchors() {
-  const todayLabel = getTodayLabelPTBR();
-
-  if (elements.cockpitTitle) {
-    const baseTitle =
-      elements.cockpitTitle.dataset.baseTitle || 'Quiet Progress Cockpit';
-    elements.cockpitTitle.innerHTML = `
-      ${baseTitle}
-      <span class="title-date-anchor">${todayLabel}</span>
-    `;
-  }
-
-  if (elements.tasksTitle) {
-    const baseTitle = elements.tasksTitle.dataset.baseTitle || 'Tarefas';
-    elements.tasksTitle.innerHTML = `
-      ${baseTitle}
-      <span class="title-date-anchor">${todayLabel}</span>
-    `;
-  }
-}
-
-function yamlSafe(value) {
-  return String(value ?? '')
-    .replaceAll('"', '\\"')
-    .replaceAll('\n', ' ')
-    .trim();
-}
-
-function buildObsidianMarkdown() {
-  if (!state.dashboard) {
-    throw new Error('Dashboard ainda não carregado.');
-  }
-
-  const dashboard = state.dashboard;
-  const dateISO = getTodayISOForFile();
-
-  const habits = dashboard.habitos || [];
-  const tasks = dashboard.tarefas || [];
-  const mindset = dashboard.mindset || {};
-  const resumo = dashboard.resumo || {};
-
-  const completedHabits = habits.filter((habit) => habit.concluido);
-  const completedTasks = tasks.filter((task) => task.status === 'CONCLUIDO');
-
-  const journalText =
-    elements.mindsetNotes?.value?.trim() || mindset.notas || '';
-
-  const habitLines = habits.length
-    ? habits
-        .map((habit) => {
-          const checked = habit.concluido ? 'x' : ' ';
-          const streak = Number(habit.streak || 0);
-
-          return `- [${checked}] ${habit.titulo}${streak > 0 ? ` 🔥${streak}` : ''}`;
-        })
-        .join('\n')
-    : '- Nenhum hábito cadastrado.';
-
-  const taskLines = tasks.length
-    ? tasks
-        .map((task) => {
-          const checked = task.status === 'CONCLUIDO' ? 'x' : ' ';
-          const prioridade = task.prioridade
-            ? ` #${task.prioridade.toLowerCase()}`
-            : '';
-
-          return `- [${checked}] ${task.titulo}${prioridade}`;
-        })
-        .join('\n')
-    : '- Nenhuma tarefa cadastrada.';
-
-  return `---
-type: quiet-progress-daily
-date: ${dateISO}
-completion: ${Number(resumo.porcentagem || 0)}
-completed_items: ${Number(resumo.totalConcluidos || 0)}
-total_items: ${Number(resumo.totalItens || 0)}
-completed_habits: ${completedHabits.length}
-total_habits: ${habits.length}
-completed_tasks: ${completedTasks.length}
-total_tasks: ${tasks.length}
-energia: ${Number(mindset.energia || 0)}
-foco: ${Number(mindset.foco || 0)}
-humor: ${Number(mindset.humor || 0)}
-source: "Quiet Progress"
----
-
-# Quiet Progress — ${dateISO}
-
-## Resumo
-
-- Progresso geral: **${Number(resumo.porcentagem || 0)}%**
-- Itens concluídos: **${Number(resumo.totalConcluidos || 0)}/${Number(resumo.totalItens || 0)}**
-- Hábitos concluídos: **${completedHabits.length}/${habits.length}**
-- Tarefas concluídas: **${completedTasks.length}/${tasks.length}**
-
-## Mindset
-
-- Energia: **${Number(mindset.energia || 0)}/3**
-- Foco: **${Number(mindset.foco || 0)}/3**
-- Humor: **${Number(mindset.humor || 0)}/3**
-
-## Hábitos
-
-${habitLines}
-
-## Tarefas
-
-${taskLines}
-
-## Journal
-
-${journalText || '_Sem journal registrado._'}
-`;
-}
-
-function downloadMarkdownFile(filename, content) {
-  const blob = new Blob([content], {
-    type: 'text/markdown;charset=utf-8',
-  });
-
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement('a');
-
-  anchor.href = url;
-  anchor.download = filename;
-  document.body.appendChild(anchor);
-  anchor.click();
-
-  anchor.remove();
-  URL.revokeObjectURL(url);
-}
-
-function exportTodayToObsidian() {
-  try {
-    const dateISO = getTodayISOForFile();
-    const markdown = buildObsidianMarkdown();
-
-    downloadMarkdownFile(`${dateISO}-QuietProgress.md`, markdown);
-    showToast('Arquivo Markdown exportado.');
-  } catch (error) {
-    showToast(error.message);
-  }
-}
-
-async function exportDateToObsidian(dateISO) {
-  try {
-    const payload = await request(`/exportar/${dateISO}`);
-
-    if (!payload.markdown) {
-      throw new Error('Markdown não retornado pelo servidor.');
+    if (lockinRemainingSeconds <= 0) {
+      pauseLockinTimer();
+      lockinRemainingSeconds = 0;
+      showToast('Lock In concluído.');
     }
 
-    downloadMarkdownFile(`${dateISO}-QuietProgress.md`, payload.markdown);
-    showToast(`Exportado: ${dateISO}`);
+    renderLockinTimer();
+  }, 1000);
+}
+
+function pauseLockinTimer() {
+  lockinRunning = false;
+  document.body.classList.remove('focus-mode');
+  window.clearInterval(lockinInterval);
+  lockinInterval = null;
+}
+
+function resetLockinTimer() {
+  pauseLockinTimer();
+  lockinRemainingSeconds = lockinInitialSeconds;
+  renderLockinTimer();
+}
+
+function shiftMonth(delta) {
+  const [year, month] = state.currentMonth.split('-').map(Number);
+  const date = new Date(year, month - 1 + delta, 1);
+  state.currentMonth = toISODate(date).slice(0, 7);
+  loadDashboard();
+}
+
+function shiftWeek(delta) {
+  state.selectedWeekStart = addDays(state.selectedWeekStart, delta * 7);
+  selectDate(state.selectedWeekStart);
+}
+
+function attachEvents() {
+  elements.navItems.forEach((item) =>
+    item.addEventListener('click', () => setView(item.dataset.view))
+  );
+  elements.bottomNavItems.forEach((item) =>
+    item.addEventListener('click', () => setView(item.dataset.view))
+  );
+
+  elements.mobileMenuBtn.addEventListener('click', () =>
+    document.body.classList.add('sidebar-open')
+  );
+  elements.sidebarOverlay.addEventListener('click', () =>
+    document.body.classList.remove('sidebar-open')
+  );
+
+  elements.mobileTodayBtn.addEventListener('click', () =>
+    selectDate(state.todayDate)
+  );
+  elements.goTodayBtn.addEventListener('click', () =>
+    selectDate(state.todayDate)
+  );
+
+  elements.openTrackerBtn.addEventListener('click', () => setView('tracker'));
+  elements.overviewOpenTrackerBtn.addEventListener('click', () =>
+    setView('tracker')
+  );
+  elements.quickAddTaskBtn.addEventListener('click', () =>
+    openTaskModal(null, { data_ref: state.selectedDate })
+  );
+  elements.overviewAddTaskBtn.addEventListener('click', () =>
+    openTaskModal(null, { data_ref: state.selectedDate })
+  );
+  elements.overviewEditCheckinBtn.addEventListener('click', () =>
+    setView('tracker')
+  );
+  elements.overviewCopyMarkdownBtn.addEventListener('click', () =>
+    exportMarkdown('copy', state.selectedDate)
+  );
+  elements.overviewDownloadMarkdownBtn.addEventListener('click', () =>
+    exportMarkdown('download', state.selectedDate)
+  );
+
+  elements.monthPicker.addEventListener('change', () => {
+    state.currentMonth = elements.monthPicker.value || state.currentMonth;
+    loadDashboard();
+  });
+
+  elements.prevMonthBtn.addEventListener('click', () => shiftMonth(-1));
+  elements.nextMonthBtn.addEventListener('click', () => shiftMonth(1));
+  elements.monthTodayBtn.addEventListener('click', () =>
+    selectDate(state.todayDate)
+  );
+  elements.addHabitBtn.addEventListener('click', () => openHabitModal());
+  elements.addHabitFromDateBtn.addEventListener('click', () =>
+    openHabitModal(null, { data_inicio: state.selectedDate })
+  );
+
+  elements.habitMatrix.addEventListener('click', async (event) => {
+    const dayHeader = event.target.closest('[data-select-date]');
+    if (dayHeader) {
+      await selectDate(dayHeader.dataset.selectDate, { skipMonth: true });
+      return;
+    }
+
+    const habitCell = event.target.closest('.habit-check-cell[data-habit-id]');
+    if (habitCell && !habitCell.disabled) {
+      await toggleHabit(
+        Number(habitCell.dataset.habitId),
+        habitCell.dataset.date
+      );
+      return;
+    }
+
+    const editHabitBtn = event.target.closest('.edit-habit-inline');
+    if (editHabitBtn) {
+      openHabitModal(getHabitById(editHabitBtn.dataset.habitId));
+      return;
+    }
+
+    const deleteHabitBtn = event.target.closest('.delete-habit-inline');
+    if (deleteHabitBtn) {
+      deleteHabit(deleteHabitBtn.dataset.habitId);
+    }
+  });
+
+  document.addEventListener('click', async (event) => {
+    const taskToggle = event.target.closest('.task-toggle');
+    if (taskToggle) {
+      await toggleTask(taskToggle.dataset.taskId);
+      return;
+    }
+
+    const editTaskBtn = event.target.closest('.edit-task-btn');
+    if (editTaskBtn) {
+      openTaskModal(getTaskById(editTaskBtn.dataset.taskId));
+      return;
+    }
+
+    const deleteTaskBtn = event.target.closest('.delete-task-btn');
+    if (deleteTaskBtn) {
+      deleteTask(deleteTaskBtn.dataset.taskId);
+      return;
+    }
+
+    const addTaskForDate = event.target.closest('.add-task-for-date');
+    if (addTaskForDate) {
+      openTaskModal(null, { data_ref: addTaskForDate.dataset.date });
+      return;
+    }
+
+    const weekTab = event.target.closest('.week-tab');
+    if (weekTab) {
+      await selectDate(weekTab.dataset.date);
+      return;
+    }
+
+    const weekCardDate = event.target.closest('.week-card-date');
+    if (weekCardDate) {
+      await selectDate(weekCardDate.dataset.date);
+      return;
+    }
+
+    const openJournal = event.target.closest('.open-journal');
+    if (openJournal) {
+      await openJournalDetail(openJournal.dataset.date);
+      return;
+    }
+
+    const copyMd = event.target.closest('.copy-md');
+    if (copyMd) {
+      await exportMarkdown('copy', copyMd.dataset.date);
+      return;
+    }
+
+    const downloadMd = event.target.closest('.download-md');
+    if (downloadMd) {
+      await exportMarkdown('download', downloadMd.dataset.date);
+      return;
+    }
+
+    const routeBtn = event.target.closest('[data-view]');
+    if (routeBtn && routeBtn.classList.contains('mini-action')) {
+      setView(routeBtn.dataset.view);
+    }
+  });
+
+  elements.prevWeekBtn.addEventListener('click', () => shiftWeek(-1));
+  elements.nextWeekBtn.addEventListener('click', () => shiftWeek(1));
+
+  elements.trackerSaveMindsetBtn.addEventListener(
+    'click',
+    saveMindsetFromTracker
+  );
+  elements.trackerCopyMarkdownBtn.addEventListener('click', () =>
+    exportMarkdown('copy', state.selectedDate)
+  );
+  elements.trackerDownloadMarkdownBtn.addEventListener('click', () =>
+    exportMarkdown('download', state.selectedDate)
+  );
+  elements.trackerMindsetGrid.addEventListener('click', async (event) => {
+    const button = event.target.closest('.mind-btn');
+    if (!button) return;
+    await setMindsetValue(button.dataset.stat, button.dataset.value);
+  });
+
+  elements.journalMonthFilter.addEventListener('change', loadJournal);
+  elements.journalSearch.addEventListener('input', debounce(loadJournal, 250));
+
+  elements.backupBtn.addEventListener('click', downloadBackup);
+  elements.sidebarBackupBtn.addEventListener('click', downloadBackup);
+  elements.restoreDbBtn.addEventListener('click', () =>
+    elements.restoreDbInput.click()
+  );
+  elements.restoreDbInput.addEventListener('change', () =>
+    restoreDatabase(elements.restoreDbInput.files?.[0])
+  );
+
+  elements.modalCancelBtn.addEventListener('click', closeModal);
+  elements.modalOverlay.addEventListener('click', (event) => {
+    if (event.target === elements.modalOverlay) closeModal();
+  });
+  elements.modalConfirmBtn.addEventListener('click', async () => {
+    if (!activeModalCallback) {
+      closeModal();
+      return;
+    }
+
+    try {
+      const shouldClose = await activeModalCallback();
+      if (shouldClose !== false) closeModal();
+    } catch (error) {
+      showToast(error.message);
+    }
+  });
+
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && !elements.modalOverlay.hasAttribute('hidden'))
+      closeModal();
+  });
+
+  elements.lockinPresetButtons.forEach((button) => {
+    button.addEventListener('click', () => {
+      if (lockinRunning) {
+        showToast('Pause antes de mudar o tempo.');
+        return;
+      }
+
+      elements.lockinPresetButtons.forEach((preset) =>
+        preset.classList.remove('active')
+      );
+      button.classList.add('active');
+
+      const isCustom = button.dataset.custom === 'true';
+      elements.lockinCustomWrap.toggleAttribute('hidden', !isCustom);
+
+      if (isCustom) {
+        setLockinDuration(elements.lockinCustomInput.value);
+        elements.lockinCustomInput.focus();
+      } else {
+        setLockinDuration(button.dataset.minutes);
+      }
+    });
+  });
+
+  elements.lockinCustomInput.addEventListener('input', () => {
+    if (!lockinRunning) setLockinDuration(elements.lockinCustomInput.value);
+  });
+
+  elements.lockinStartBtn.addEventListener('click', startLockinTimer);
+  elements.lockinPauseBtn.addEventListener('click', pauseLockinTimer);
+  elements.lockinResetBtn.addEventListener('click', resetLockinTimer);
+}
+
+async function init() {
+  updateTemporalHeader();
+  attachEvents();
+  renderLockinTimer();
+
+  elements.monthPicker.value = state.currentMonth;
+  elements.journalMonthFilter.value = state.currentMonth;
+
+  try {
+    await loadDashboard();
+    await loadDay(state.selectedDate);
+    await loadHealth();
   } catch (error) {
     showToast(error.message);
   }
 }
+
+document.addEventListener('DOMContentLoaded', init);

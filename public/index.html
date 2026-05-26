@@ -2,461 +2,408 @@
 <html lang="pt-BR">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Quiet Progress // Fullstack Local</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#000000" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="Quiet Progress" />
+    <title>Quiet Progress // Temporal OS</title>
 
+    <link rel="manifest" href="./manifest.json" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
       href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap"
       rel="stylesheet"
     />
-
     <link rel="stylesheet" href="./styles.css" />
   </head>
+
   <body>
+    <div class="mobile-topbar">
+      <button class="hamburger" id="mobileMenuBtn" type="button" aria-label="Abrir menu">☰</button>
+      <div>
+        <strong>Quiet Progress</strong>
+        <span id="mobileTemporalBadge">SYNC</span>
+      </div>
+      <button class="today-mini-btn" id="mobileTodayBtn" type="button">Hoje</button>
+    </div>
+
     <div class="app-layout">
-      <aside class="sidebar" aria-label="Navegação principal">
+      <aside class="sidebar" id="sidebar">
         <div class="brand">
           <div class="brand-mark">QP</div>
           <div>
             <strong>Quiet Progress</strong>
-            <span>Local OS</span>
+            <span>Temporal OS</span>
           </div>
         </div>
 
         <nav class="nav-menu">
-          <button class="nav-item active" data-route="cockpit" type="button">
+          <button class="nav-item active" type="button" data-view="overview">
             <span class="nav-icon">◎</span>
-            <span>Cockpit</span>
-            <small>Geral</small>
+            <span>Overview</span>
+            <small>Dashboard</small>
           </button>
 
-          <button class="nav-item" data-route="habits" type="button">
-            <span class="nav-icon">▣</span>
-            <span>Hábitos</span>
-            <small>Daily Core</small>
+          <button class="nav-item" type="button" data-view="tracker">
+            <span class="nav-icon">▦</span>
+            <span>Tracker</span>
+            <small>Habits & Tasks</small>
           </button>
 
-          <button class="nav-item" data-route="tasks" type="button">
-            <span class="nav-icon">⌁</span>
-            <span>Tarefas</span>
-            <small>Daily Ops</small>
+          <button class="nav-item" type="button" data-view="journal">
+            <span class="nav-icon">✎</span>
+            <span>Journal</span>
+            <small>Check-ins</small>
           </button>
 
-          <button class="nav-item" data-route="stats" type="button">
-            <span class="nav-icon">⌬</span>
-            <span>Estatísticas</span>
-            <small>Analysis</small>
+          <button class="nav-item" type="button" data-view="backup">
+            <span class="nav-icon">⬢</span>
+            <span>Backup</span>
+            <small>Restore</small>
           </button>
         </nav>
 
         <div class="sidebar-footer">
-          <button class="backup-btn" id="backupBtn" type="button">
+          <button class="backup-btn" id="sidebarBackupBtn" type="button">
             <span>⇩</span>
             Download Backup
           </button>
-
           <div class="mini-status">
             <span class="pulse-dot"></span>
-            <span id="apiStatus">CONNECTING</span>
+            <span id="apiStatus">ONLINE</span>
           </div>
         </div>
       </aside>
 
+      <div class="sidebar-overlay" id="sidebarOverlay"></div>
+
       <main class="main-shell">
-        <section class="view active-view" id="view-cockpit">
-          <header class="hud-header">
-            <section class="hero-card">
-              <div class="hero-orb"></div>
-              <div class="eyebrow">
-                <span class="pulse-dot"></span> Lock In Protocol
-              </div>
-              <h1 id="cockpitTitle" data-base-title="Quiet Progress Cockpit">Quiet Progress Cockpit</h1>
-              <p class="hero-copy">
-                Dados persistidos localmente em SQLite. Hábitos, tarefas e
-                mindset agora sobrevivem ao refresh.
-              </p>
-            </section>
+        <header class="temporal-header">
+          <div>
+            <div class="eyebrow">
+              <span class="pulse-dot"></span>
+              Temporal Tracking
+            </div>
+            <h1 id="mainTitle">Quiet Progress</h1>
+            <div class="temporal-line">
+              <span>Hoje: <strong id="todayLabel">--</strong></span>
+              <span>Editando: <strong id="selectedLabel">--</strong></span>
+              <span class="date-mode-badge" id="dateModeBadge">SYNC</span>
+            </div>
+          </div>
 
-            <aside class="progress-card" aria-label="Progresso geral do dia">
-              <div>
-                <div class="progress-top">
-                  <div>
-                    <div class="card-label">Daily Completion</div>
-                    <p class="progress-meta" id="progressMeta">
-                      Carregando sistemas...
-                    </p>
-                  </div>
-                  <div class="chip" id="stateChip">SYNC</div>
+          <div class="header-actions">
+            <button class="ghost-btn" id="goTodayBtn" type="button">Voltar para hoje</button>
+            <button class="primary-btn" id="openTrackerBtn" type="button">Abrir Tracker</button>
+            <button class="primary-btn alt" id="quickAddTaskBtn" type="button">+ Tarefa</button>
+          </div>
+        </header>
+
+        <section class="view active-view" id="view-overview">
+          <section class="overview-grid">
+            <article class="panel overview-command">
+              <div class="panel-header compact-header">
+                <div>
+                  <div class="panel-kicker">Command Panel</div>
+                  <h2 class="panel-title" id="overviewTitle">Resumo do dia</h2>
                 </div>
+                <span class="chip" id="overviewProgressChip">0%</span>
+              </div>
 
-                <div class="progress-percent">
-                  <span id="progressPercent">0</span>%
+              <div class="day-summary-grid compact">
+                <div class="stat-box">
+                  <div class="card-label">Hábitos</div>
+                  <div class="stat-value" id="overviewHabitStat">0/0</div>
+                </div>
+                <div class="stat-box">
+                  <div class="card-label">Tarefas</div>
+                  <div class="stat-value" id="overviewTaskStat">0/0</div>
+                </div>
+                <div class="stat-box">
+                  <div class="card-label">Geral</div>
+                  <div class="stat-value" id="overviewTotalStat">0%</div>
                 </div>
               </div>
 
               <div class="progress-track">
-                <div class="progress-fill" id="progressFill"></div>
-              </div>
-            </aside>
-
-            <aside class="lockin-card" aria-label="Timer Lock In">
-              <div class="lockin-ring">
-                <div class="lockin-time" id="lockinTime">25:00</div>
-                <div class="lockin-label">LOCK IN</div>
+                <div class="progress-fill" id="overviewProgressFill"></div>
               </div>
 
-              <div class="lockin-presets" aria-label="Duração do Pomodoro">
-                <button
-                  class="lockin-preset active"
-                  data-minutes="25"
-                  type="button"
-                >
-                  25
-                </button>
-
-                <button class="lockin-preset" data-minutes="50" type="button">
-                  50
-                </button>
-
-                <button
-                  class="lockin-preset custom"
-                  data-custom="true"
-                  type="button"
-                >
-                  Custom
-                </button>
+              <div class="overview-actions">
+                <button class="status-btn" id="overviewOpenTrackerBtn" type="button">Editar no Tracker</button>
+                <button class="status-btn" id="overviewCopyMarkdownBtn" type="button">Copiar Markdown</button>
+                <button class="status-btn" id="overviewDownloadMarkdownBtn" type="button">Baixar .md</button>
               </div>
-
-              <div class="lockin-custom-wrap" id="lockinCustomWrap" hidden>
-                <input
-                  id="lockinCustomInput"
-                  type="number"
-                  min="1"
-                  max="180"
-                  value="25"
-                  aria-label="Minutos customizados"
-                />
-                <span>min</span>
-              </div>
-
-              <div class="lockin-controls">
-                <button id="lockinStartBtn" type="button">Start</button>
-                <button id="lockinPauseBtn" type="button">Pause</button>
-                <button id="lockinResetBtn" type="button">Reset</button>
-              </div>
-            </aside>
-          </header>
-
-          <section class="cockpit-grid">
-            <article class="panel highlight-panel">
-              <div class="panel-header">
-                <div>
-                  <div class="panel-kicker">Today</div>
-                  <h2 class="panel-title">Destaques do Dia</h2>
-                </div>
-                <span class="chip">Focus</span>
-              </div>
-
-              <div class="highlight-list" id="todayHighlights"></div>
             </article>
 
-            <article class="panel cockpit-summary">
-              <div class="panel-header">
+            <article class="panel overview-lockin">
+              <div class="panel-header compact-header">
                 <div>
-                  <div class="panel-kicker">Quick Stats</div>
-                  <h2 class="panel-title">Resumo Operacional</h2>
+                  <div class="panel-kicker">Lock In</div>
+                  <h2 class="panel-title">Pomodoro</h2>
                 </div>
               </div>
 
-              <div class="stats-row">
-                <div class="stat-box">
-                  <div class="card-label">Completed</div>
-                  <div class="stat-value" id="doneCount">0</div>
+              <div class="lockin-card compact">
+                <div class="lockin-ring small">
+                  <div class="lockin-time" id="lockinTime">25:00</div>
+                  <div class="lockin-label">LOCK IN</div>
                 </div>
-                <div class="stat-box">
-                  <div class="card-label">Remaining</div>
-                  <div class="stat-value" id="remainingCount">0</div>
+
+                <div class="lockin-presets">
+                  <button class="lockin-preset active" data-minutes="25" type="button">25</button>
+                  <button class="lockin-preset" data-minutes="50" type="button">50</button>
+                  <button class="lockin-preset custom" data-custom="true" type="button">Custom</button>
                 </div>
-                <div class="stat-box">
-                  <div class="card-label">Focus State</div>
-                  <div class="stat-value" id="focusState">Cold</div>
+
+                <div class="lockin-custom-wrap" id="lockinCustomWrap" hidden>
+                  <input id="lockinCustomInput" type="number" min="1" max="180" value="25" />
+                  <span>min</span>
+                </div>
+
+                <div class="lockin-controls">
+                  <button id="lockinStartBtn" type="button">Start</button>
+                  <button id="lockinPauseBtn" type="button">Pause</button>
+                  <button id="lockinResetBtn" type="button">Reset</button>
                 </div>
               </div>
+            </article>
+
+            <article class="panel overview-tasks">
+              <div class="panel-header compact-header">
+                <div>
+                  <div class="panel-kicker">Daily Ops</div>
+                  <h2 class="panel-title">Tarefas do dia</h2>
+                </div>
+                <button class="mini-action" id="overviewAddTaskBtn" type="button">Adicionar</button>
+              </div>
+              <ul class="task-list compact-overview" id="overviewTaskList"></ul>
+            </article>
+
+            <article class="panel overview-checkin">
+              <div class="panel-header compact-header">
+                <div>
+                  <div class="panel-kicker">Check-in</div>
+                  <h2 class="panel-title">Mindset + nota</h2>
+                </div>
+                <button class="mini-action" id="overviewEditCheckinBtn" type="button">Editar</button>
+              </div>
+
+              <div class="overview-mindset-mini" id="overviewMindsetMini"></div>
+              <p class="note-preview" id="overviewNotePreview">Sem nota.</p>
             </article>
           </section>
-        </section>
 
-        <section class="view" id="view-habits">
-          <header class="page-header">
-            <div>
-              <div class="eyebrow">
-                <span class="pulse-dot"></span> Habit Tracker
-              </div>
-              <h1>Hábitos</h1>
-              <p>
-                Core diário carregado do SQLite. Clique para gravar ou inverter
-                o log de hoje.
-              </p>
-            </div>
-            <span class="chip" id="habitCountChip">0 Core</span>
-          </header>
-
-          <section class="wide-grid">
-            <article class="panel large-panel">
-              <div class="panel-header">
+          <section class="stats-grid overview-charts">
+            <article class="panel chart-card">
+              <div class="panel-header compact-header">
                 <div>
-                  <div class="panel-kicker">Daily Core</div>
-                  <h2 class="panel-title">Lista de Hábitos</h2>
+                  <div class="panel-kicker">Month</div>
+                  <h2 class="panel-title">Progresso geral</h2>
                 </div>
-                <span class="chip">SQLite Log</span>
               </div>
-
-              <form class="habit-form" id="habitForm">
-                <input
-                  id="habitTitleInput"
-                  type="text"
-                  placeholder="Novo hábito..."
-                  autocomplete="off"
-                />
-                <button type="submit" aria-label="Adicionar hábito">+</button>
-              </form>
-
-              <ul class="habit-list" id="habitList"></ul>
+              <div class="chart-wrap"><canvas id="monthDonutChart"></canvas></div>
             </article>
 
-            <article class="panel mindset-panel">
-              <div class="panel-header">
+            <article class="panel chart-card">
+              <div class="panel-header compact-header">
+                <div>
+                  <div class="panel-kicker">Tasks</div>
+                  <h2 class="panel-title">Tarefas por dia</h2>
+                </div>
+              </div>
+              <div class="chart-wrap"><canvas id="tasksBarChart"></canvas></div>
+            </article>
+
+            <article class="panel chart-card wide-chart">
+              <div class="panel-header compact-header">
                 <div>
                   <div class="panel-kicker">Mindset</div>
-                  <h2 class="panel-title">Status Interno</h2>
-                </div>
-                <span class="chip">Auto Save</span>
-              </div>
-              <div class="mindset-grid" id="mindsetGrid"></div>
-
-              <div class="journal-box">
-                <label for="mindsetNotes">Journal do dia</label>
-                <textarea
-                  id="mindsetNotes"
-                  placeholder="Notas rápidas do dia, travas, progresso, próximos passos..."
-                ></textarea>
-
-                <button id="saveJournalBtn" type="button">
-                  Salvar Journal
-                </button>
-
-                <button
-                  id="exportObsidianBtn"
-                  class="status-btn export-obsidian-btn"
-                  type="button"
-                >
-                  Exportar para Obsidian (.md)
-                </button>
-
-                <div class="journal-feed-wrap">
-                  <div class="journal-feed-header">
-                    <span>Reflexões passadas</span>
-                    <button id="reloadJournalBtn" type="button">
-                      Atualizar
-                    </button>
-                  </div>
-
-                  <div id="journal-feed" class="journal-feed"></div>
+                  <h2 class="panel-title">Energia / Foco / Motivação / Humor</h2>
                 </div>
               </div>
+              <div class="chart-wrap line"><canvas id="mindsetLineChart"></canvas></div>
+            </article>
+
+            <article class="panel chart-card">
+              <div class="panel-header compact-header">
+                <div>
+                  <div class="panel-kicker">Habits</div>
+                  <h2 class="panel-title">Conclusão por hábito</h2>
+                </div>
+              </div>
+              <div class="chart-wrap"><canvas id="habitBarChart"></canvas></div>
+            </article>
+
+            <article class="panel chart-card">
+              <div class="panel-header compact-header">
+                <div>
+                  <div class="panel-kicker">Weeks</div>
+                  <h2 class="panel-title">Progresso semanal</h2>
+                </div>
+              </div>
+              <div class="chart-wrap"><canvas id="weekBarChart"></canvas></div>
             </article>
           </section>
         </section>
 
-        <section class="view" id="view-tasks">
-          <header class="page-header">
+        <section class="view" id="view-tracker">
+          <section class="panel tracker-toolbar">
             <div>
-              <div class="eyebrow">
-                <span class="pulse-dot"></span> Daily Ops
+              <div class="panel-kicker">Tracker</div>
+              <h2 class="panel-title" id="monthTitle">Mês atual</h2>
+              <div class="tracker-date-line">
+                <span>Hoje: <strong id="trackerTodayLabel">--</strong></span>
+                <span>Editando: <strong id="trackerSelectedLabel">--</strong></span>
+                <span class="date-mode-badge" id="trackerDateModeBadge">SYNC</span>
               </div>
-              <h1 id="tasksTitle" data-base-title="Tarefas">Tarefas</h1>
-              <p>
-                Tarefas do dia salvas no banco local. Marcar como concluída
-                atualiza o progresso global.
-              </p>
             </div>
-            <span class="chip" id="taskCountChip">0 Ops</span>
-          </header>
 
-          <section class="panel large-panel">
-            <div class="panel-header">
+            <div class="month-controls">
+              <button id="prevMonthBtn" type="button">←</button>
+              <input id="monthPicker" type="month" />
+              <button id="nextMonthBtn" type="button">→</button>
+              <button id="monthTodayBtn" type="button">Hoje</button>
+            </div>
+          </section>
+
+          <section class="month-dashboard-grid">
+            <article class="panel habit-grid-panel">
+              <div class="panel-header compact-header">
+                <div>
+                  <div class="panel-kicker">Habit Matrix</div>
+                  <h2 class="panel-title">Hábitos recorrentes</h2>
+                </div>
+                <div class="panel-actions">
+                  <button class="primary-btn small" id="addHabitBtn" type="button">+ Hábito</button>
+                  <button class="mini-action" id="addHabitFromDateBtn" type="button">+ A partir deste dia</button>
+                </div>
+              </div>
+
+              <div class="legend-row">
+                <span><i class="legend today"></i> Hoje</span>
+                <span><i class="legend selected"></i> Selecionado</span>
+                <span><i class="legend future"></i> Futuro</span>
+                <span><i class="legend done"></i> Concluído</span>
+              </div>
+
+              <div class="habit-matrix-wrap">
+                <div class="habit-matrix" id="habitMatrix"></div>
+              </div>
+            </article>
+
+            <article class="panel habit-analysis-panel">
+              <div class="panel-header compact-header">
+                <div>
+                  <div class="panel-kicker">Analysis</div>
+                  <h2 class="panel-title">Progresso por hábito</h2>
+                </div>
+              </div>
+              <div class="habit-progress-list" id="habitProgressList"></div>
+            </article>
+          </section>
+
+          <section class="panel tracker-section">
+            <div class="panel-header compact-header">
               <div>
-                <div class="panel-kicker">Execution</div>
-                <h2 class="panel-title">Task Manager</h2>
+                <div class="panel-kicker">Week Task Tracker</div>
+                <h2 class="panel-title" id="weekTitle">Semana selecionada</h2>
               </div>
-              <span class="chip">Persistent</span>
+              <div class="week-nav">
+                <button class="mini-action" id="prevWeekBtn" type="button">← Semana</button>
+                <button class="mini-action" id="nextWeekBtn" type="button">Semana →</button>
+              </div>
+            </div>
+            <div class="week-day-tabs" id="weekDayTabs"></div>
+            <div class="week-cards" id="weekCards"></div>
+          </section>
+
+          <section class="panel tracker-checkin">
+            <div class="panel-header compact-header">
+              <div>
+                <div class="panel-kicker">Daily Check-in</div>
+                <h2 class="panel-title" id="trackerCheckinTitle">Check-in do selectedDate</h2>
+              </div>
+              <div class="export-row compact-buttons">
+                <button class="status-btn" id="trackerCopyMarkdownBtn" type="button">Copiar MD</button>
+                <button class="status-btn" id="trackerDownloadMarkdownBtn" type="button">Baixar .md</button>
+              </div>
             </div>
 
-            <form class="task-form" id="taskForm">
-              <input
-                id="taskTitleInput"
-                type="text"
-                placeholder="Nova tarefa para hoje..."
-                autocomplete="off"
-              />
-              <select id="taskPriorityInput">
-                <option value="ALTA">Alta</option>
-                <option value="MÉDIA" selected>Média</option>
-                <option value="BAIXA">Baixa</option>
-              </select>
-              <button type="submit">Adicionar</button>
-            </form>
-            <ul class="task-list" id="taskList"></ul>
-
-            <div class="task-history-panel">
-              <button
-                class="history-toggle-btn"
-                id="taskHistoryBtn"
-                type="button"
-              >
-                Ver Histórico
-              </button>
-
-              <div class="task-history-list" id="taskHistoryList" hidden></div>
+            <div class="mindset-grid" id="trackerMindsetGrid"></div>
+            <div class="journal-box">
+              <label for="trackerNotes">Nota do dia</label>
+              <textarea id="trackerNotes" placeholder="Escreva uma nota para o dia selecionado..."></textarea>
+              <button id="trackerSaveMindsetBtn" type="button">Salvar Check-in</button>
             </div>
           </section>
         </section>
 
-        <section class="view" id="view-stats">
-          <header class="page-header">
-            <div>
-              <div class="eyebrow">
-                <span class="pulse-dot"></span> Analysis
-              </div>
-              <h1>Estatísticas</h1>
-              <p>
-                Dados reais do SQLite: progresso diário, ranking de hábitos,
-                mindset e mapa de consistência.
-              </p>
-            </div>
-            <span class="chip">Dashboard</span>
-          </header>
-
-          <section class="panel system-tools-panel">
-            <div class="panel-header">
+        <section class="view" id="view-journal">
+          <section class="panel">
+            <div class="panel-header compact-header">
               <div>
-                <div class="panel-kicker">System Tools</div>
+                <div class="panel-kicker">Journal</div>
+                <h2 class="panel-title">Histórico de check-ins</h2>
+              </div>
+              <div class="history-filters">
+                <input id="journalMonthFilter" type="month" />
+                <input id="journalSearch" type="search" placeholder="Buscar nas notas..." />
+              </div>
+            </div>
+
+            <div class="history-list" id="journalList"></div>
+            <div class="history-detail" id="journalDetail"></div>
+          </section>
+        </section>
+
+        <section class="view" id="view-backup">
+          <section class="panel">
+            <div class="panel-header compact-header">
+              <div>
+                <div class="panel-kicker">System</div>
                 <h2 class="panel-title">Backup & Restore</h2>
               </div>
-              <span class="chip">Local DB</span>
+            </div>
+
+            <div class="backup-note">
+              Antes de restaurar um banco antigo, baixe um backup atual. Restore substitui o arquivo SQLite em uso.
             </div>
 
             <div class="system-tools-actions">
-              <button class="system-tool-btn" id="restoreDbBtn" type="button">
-                Restaurar Banco de Dados
-              </button>
-
+              <button class="system-tool-btn" id="backupBtn" type="button">Download Backup</button>
+              <button class="system-tool-btn danger" id="restoreDbBtn" type="button">Restaurar Banco de Dados</button>
               <input id="restoreDbInput" type="file" accept=".db" hidden />
             </div>
-          </section>
-
-          <section class="panel weekly-panel">
-            <div class="panel-header">
-              <div>
-                <div class="panel-kicker">Weekly Tracker</div>
-                <h2 class="panel-title">Hábitos da Semana</h2>
-              </div>
-              <span class="chip">Seg → Dom</span>
-            </div>
-
-            <div id="weekly-tracker" class="weekly-tracker-grid"></div>
-          </section>
-
-          <section class="stats-dashboard">
-            <article class="panel chart-card wide-chart">
-              <div class="panel-header">
-                <div>
-                  <div class="panel-kicker">Monthly Performance</div>
-                  <h2 class="panel-title">Progresso Mensal</h2>
-                </div>
-                <span class="chip">Real Data</span>
-              </div>
-
-              <div class="chart-canvas-wrap">
-                <canvas id="progressChart"></canvas>
-              </div>
-            </article>
-
-            <article class="panel chart-card">
-              <div class="panel-header">
-                <div>
-                  <div class="panel-kicker">Consistency</div>
-                  <h2 class="panel-title">Ranking de Hábitos</h2>
-                </div>
-              </div>
-
-              <div class="chart-canvas-wrap">
-                <canvas id="habitsChart"></canvas>
-              </div>
-            </article>
-
-            <article class="panel chart-card">
-              <div class="panel-header">
-                <div>
-                  <div class="panel-kicker">Mindset</div>
-                  <h2 class="panel-title">Energia / Foco / Humor</h2>
-                </div>
-              </div>
-
-              <div class="chart-canvas-wrap">
-                <canvas id="mindsetChart"></canvas>
-              </div>
-            </article>
-
-            <article class="panel chart-card wide-chart">
-              <div class="panel-header">
-                <div>
-                  <div class="panel-kicker">Habit Heatmap</div>
-                  <h2 class="panel-title">Mapa de Consistência</h2>
-                </div>
-              </div>
-
-              <div
-                class="heatmap-grid"
-                id="heatmapGrid"
-                aria-hidden="true"
-              ></div>
-            </article>
+            <div class="health-box" id="healthBox">Carregando diagnóstico...</div>
           </section>
         </section>
       </main>
     </div>
 
+    <div class="bottom-nav">
+      <button class="bottom-nav-item active" data-view="overview" type="button">Overview</button>
+      <button class="bottom-nav-item" data-view="tracker" type="button">Tracker</button>
+      <button class="bottom-nav-item" data-view="journal" type="button">Journal</button>
+      <button class="bottom-nav-item" data-view="backup" type="button">Backup</button>
+    </div>
+
     <div class="modal-overlay" id="modalOverlay" hidden>
-      <div
-        class="modal-card"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="modalTitle"
-      >
+      <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
         <div class="modal-kicker">Quiet Progress</div>
         <h2 id="modalTitle">Confirmação</h2>
         <p id="modalMessage">Tem certeza?</p>
-
-        <div class="modal-input-wrap" id="modalInputWrap" hidden>
-          <input id="modalInput" type="text" autocomplete="off" />
-        </div>
-
+        <div class="modal-body" id="modalBody"></div>
         <div class="modal-actions">
-          <button class="modal-btn ghost" id="modalCancelBtn" type="button">
-            Cancelar
-          </button>
-
-          <button class="modal-btn danger" id="modalConfirmBtn" type="button">
-            Confirmar
-          </button>
+          <button class="modal-btn ghost" id="modalCancelBtn" type="button">Cancelar</button>
+          <button class="modal-btn danger" id="modalConfirmBtn" type="button">Confirmar</button>
         </div>
       </div>
     </div>
 
     <div class="toast" id="toast"></div>
+
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="./app.js"></script>
   </body>
