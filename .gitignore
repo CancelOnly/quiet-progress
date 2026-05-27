@@ -1,28 +1,31 @@
 # Dependencies
 node_modules/
 
-# Environment
+# Environment / secrets
 .env
+.env.example
 .env.local
+.env.*.local
 
-# SQLite databases
+# SQLite local database and sidecar files
+quiet_progress.db
 *.db
-*.db-shm
 *.db-wal
+*.db-shm
 *.db-journal
 *.sqlite
 *.sqlite3
 
-# App data
+# Runtime/generated data
 backups/
-exports/
 logs/
-
-# Uploads
-uploads/*
+exports/
+uploads/
 !uploads/.gitkeep
+*.log
 
 # OS/editor
 .DS_Store
 Thumbs.db
-*.log
+.vscode/
+.idea/

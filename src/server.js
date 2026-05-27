@@ -1,9 +1,13 @@
+require('dotenv').config();
+
 const express = require('express');
-const cors = require('cors');
 const path = require('path');
 const os = require('os');
 const fs = require('fs');
 const multer = require('multer');
+const session = require('express-session');
+const helmet = require('helmet');
+const rateLimit = require('express-rate-limit');
 
 const {
   DB_PATH,
@@ -13,11 +17,45 @@ const {
   run,
   get,
   all,
-  databaseExists
+  databaseExists,
 } = require('./database');
 
 const app = express();
+
+app.disable('x-powered-by');
+app.set('trust proxy', 1);
+
 const PORT = Number(process.env.PORT || 3000);
+const HOST = process.env.HOST || '0.0.0.0';
+const NODE_ENV = process.env.NODE_ENV || 'development';
+const IS_PRODUCTION = NODE_ENV === 'production';
+const PUBLIC_BASE_URL =
+  process.env.PUBLIC_BASE_URL || `http://localhost:${PORT}`;
+const APP_PASSWORD = process.env.APP_PASSWORD || 'trocar-essa-senha';
+const SESSION_SECRET = process.env.SESSION_SECRET || 'trocar-esse-segredo';
+const SESSION_MAX_AGE_DAYS = Number(process.env.SESSION_MAX_AGE_DAYS || 30);
+const SESSION_MAX_AGE_MS = SESSION_MAX_AGE_DAYS * 24 * 60 * 60 * 1000;
+
+if (
+  IS_PRODUCTION &&
+  (!process.env.APP_PASSWORD || !process.env.SESSION_SECRET)
+) {
+  console.error(
+    '[SECURITY] Em produção, defina APP_PASSWORD e SESSION_SECRET no .env.'
+  );
+  process.exit(1);
+}
+
+if (
+  !IS_PRODUCTION &&
+  (!process.env.APP_PASSWORD || !process.env.SESSION_SECRET)
+) {
+  console.warn(
+    '[SECURITY] Usando credenciais padrão de desenvolvimento. Configure APP_PASSWORD e SESSION_SECRET no .env.'
+  );
+}
+
+const PUBLIC_DIR = path.join(__dirname, '..', 'public');
 const UPLOAD_DIR = path.join(__dirname, '..', 'uploads');
 
 fs.mkdirSync(UPLOAD_DIR, { recursive: true });
@@ -25,7 +63,7 @@ fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 const upload = multer({
   dest: UPLOAD_DIR,
   limits: {
-    fileSize: 80 * 1024 * 1024
+    fileSize: 80 * 1024 * 1024,
   },
   fileFilter: (request, file, callback) => {
     if (!file.originalname.toLowerCase().endsWith('.db')) {
@@ -34,12 +72,8 @@ const upload = multer({
     }
 
     callback(null, true);
-  }
+  },
 });
-
-app.use(cors());
-app.use(express.json({ limit: '2mb' }));
-app.use(express.static(path.join(__dirname, '..', 'public')));
 
 function nowISO() {
   return new Date().toISOString();
@@ -49,6 +83,364 @@ function todayISO() {
   return new Date().toISOString().slice(0, 10);
 }
 
+function isAllowedLocalOrigin(origin, request) {
+  if (!origin) return true;
+
+  if (origin === 'null') {
+    return !IS_PRODUCTION;
+  }
+
+  let originUrl;
+
+  try {
+    originUrl = new URL(origin);
+  } catch {
+    return false;
+  }
+
+  const requestHost = request.get('host');
+  const publicBaseUrl = new URL(PUBLIC_BASE_URL);
+
+  const allowedHosts = new Set([
+    requestHost,
+    publicBaseUrl.host,
+    `localhost:${PORT}`,
+    `127.0.0.1:${PORT}`,
+    `0.0.0.0:${PORT}`,
+  ]);
+
+  const hostname = originUrl.hostname;
+
+  const isPrivateLan =
+    hostname === 'localhost' ||
+    hostname === '127.0.0.1' ||
+    hostname.startsWith('192.168.') ||
+    hostname.startsWith('10.') ||
+    /^172\.(1[6-9]|2\d|3[0-1])\./.test(hostname);
+
+  const isExpectedPort = !originUrl.port || originUrl.port === String(PORT);
+
+  if (allowedHosts.has(originUrl.host)) return true;
+
+  if (!IS_PRODUCTION && isPrivateLan && isExpectedPort) {
+    return true;
+  }
+
+  return false;
+}
+
+function sameOriginCors(request, response, next) {
+  const origin = request.get('origin');
+
+  if (!origin) {
+    next();
+    return;
+  }
+
+  if (isAllowedLocalOrigin(origin, request)) {
+    response.setHeader('Access-Control-Allow-Origin', origin);
+    response.setHeader('Vary', 'Origin');
+    response.setHeader('Access-Control-Allow-Credentials', 'true');
+    response.setHeader(
+      'Access-Control-Allow-Methods',
+      'GET,POST,PUT,PATCH,DELETE,OPTIONS'
+    );
+    response.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+
+    if (request.method === 'OPTIONS') {
+      response.sendStatus(204);
+      return;
+    }
+
+    next();
+    return;
+  }
+
+  console.warn('[SECURITY] Origem bloqueada:', {
+    origin,
+    host: request.get('host'),
+    publicBaseUrl: PUBLIC_BASE_URL,
+    nodeEnv: NODE_ENV,
+  });
+
+  response.status(403).json({ error: 'Origem não permitida.' });
+}
+
+function isAuthenticated(request) {
+  return Boolean(request.session && request.session.authenticated === true);
+}
+
+const PUBLIC_PATHS = new Set([
+  '/login',
+  '/login.html',
+  '/login.js',
+  '/manifest.json',
+  '/favicon.ico',
+  '/api/health',
+]);
+
+function requireAuthentication(request, response, next) {
+  if (PUBLIC_PATHS.has(request.path)) {
+    next();
+    return;
+  }
+
+  if (isAuthenticated(request)) {
+    next();
+    return;
+  }
+
+  if (request.path.startsWith('/api')) {
+    response.status(401).json({ error: 'Autenticação necessária.' });
+    return;
+  }
+
+  const nextUrl = encodeURIComponent(request.originalUrl || '/');
+  response.redirect(`/login?next=${nextUrl}`);
+}
+
+function noStoreProtectedPages(request, response, next) {
+  if (isAuthenticated(request)) {
+    response.setHeader(
+      'Cache-Control',
+      'no-store, no-cache, must-revalidate, private'
+    );
+    response.setHeader('Pragma', 'no-cache');
+    response.setHeader('Expires', '0');
+  }
+
+  next();
+}
+
+function getSafeNextUrl(value) {
+  if (!value || typeof value !== 'string') return '/';
+  if (!value.startsWith('/') || value.startsWith('//')) return '/';
+  if (value.startsWith('/login')) return '/';
+  return value;
+}
+
+function escapeHtml(value) {
+  return String(value || '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#039;');
+}
+
+function sendLoginResponse(request, response, ok, options = {}) {
+  const wantsJson =
+    request.is('application/json') ||
+    String(request.get('accept') || '').includes('application/json');
+
+  if (wantsJson) {
+    response.status(ok ? 200 : 401).json(options.payload || { ok });
+    return;
+  }
+
+  response.redirect(options.redirectTo || '/login');
+}
+
+app.use(sameOriginCors);
+app.use(express.urlencoded({ extended: false }));
+app.use(express.json({ limit: '2mb' }));
+
+app.use(
+  helmet({
+    contentSecurityPolicy: {
+      useDefaults: true,
+      directives: {
+        defaultSrc: ["'self'"],
+        scriptSrc: ["'self'", 'https://cdn.jsdelivr.net'],
+        styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
+        fontSrc: ["'self'", 'https://fonts.gstatic.com'],
+        imgSrc: ["'self'", 'data:'],
+        connectSrc: ["'self'"],
+
+        /*
+          Importante:
+          remove upgrade-insecure-requests.
+          Senão, em alguns browsers/mobile, http://localhost:3000
+          vira tentativa de https://localhost:3000 e quebra com
+          ERR_SSL_PROTOCOL_ERROR.
+        */
+        upgradeInsecureRequests: null,
+      },
+    },
+  })
+);
+
+app.use(
+  session({
+    name: 'quiet_progress_sid',
+    secret: SESSION_SECRET,
+    resave: false,
+    saveUninitialized: false,
+    rolling: true,
+    cookie: {
+      httpOnly: true,
+      sameSite: 'lax',
+      secure: IS_PRODUCTION,
+      maxAge: SESSION_MAX_AGE_MS,
+    },
+  })
+);
+
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: (request, response) => {
+    const wantsJson =
+      request.is('application/json') ||
+      String(request.get('accept') || '').includes('application/json');
+
+    if (wantsJson) {
+      response.status(429).json({
+        error:
+          'Muitas tentativas de login. Aguarde 15 minutos e tente novamente.',
+      });
+      return;
+    }
+
+    response.redirect('/login?rate_limited=1');
+  },
+});
+
+app.get('/api/health', (request, response) => {
+  const memory = process.memoryUsage();
+
+  response.json({
+    status: 'ok',
+    uptime: Math.round(process.uptime()),
+    node: process.version,
+    platform: process.platform,
+    arch: process.arch,
+    databasePath: DB_PATH,
+    databaseExists: databaseExists(),
+    today: todayISO(),
+    authenticated: isAuthenticated(request),
+    memory: {
+      rss: memory.rss,
+      heapTotal: memory.heapTotal,
+      heapUsed: memory.heapUsed,
+      external: memory.external,
+    },
+  });
+});
+
+app.get('/login', (request, response) => {
+  if (isAuthenticated(request)) {
+    response.redirect('/');
+    return;
+  }
+
+  const nextUrl = getSafeNextUrl(request.query.next || '/');
+  const hasError = request.query.error === '1';
+  const rateLimited = request.query.rate_limited === '1';
+  const template = fs.readFileSync(path.join(PUBLIC_DIR, 'login.html'), 'utf8');
+
+  response
+    .type('html')
+    .send(
+      template
+        .replaceAll('{{NEXT_VALUE}}', escapeHtml(nextUrl))
+        .replaceAll(
+          '{{ERROR_MESSAGE}}',
+          hasError
+            ? '<div class="login-error">Senha inválida. Tenta de novo.</div>'
+            : rateLimited
+              ? '<div class="login-error">Muitas tentativas. Aguarde alguns minutos.</div>'
+              : ''
+        )
+    );
+});
+
+app.post('/login', loginLimiter, (request, response) => {
+  const password = String(request.body.password || '');
+  const nextUrl = getSafeNextUrl(
+    request.body.next || request.query.next || '/'
+  );
+
+  if (password !== APP_PASSWORD) {
+    sendLoginResponse(request, response, false, {
+      redirectTo: `/login?error=1&next=${encodeURIComponent(nextUrl)}`,
+      payload: { ok: false, error: 'Senha inválida.' },
+    });
+    return;
+  }
+
+  request.session.regenerate((error) => {
+    if (error) {
+      console.error('[AUTH] Erro ao regenerar sessão:', error);
+      response.status(500).json({ error: 'Erro ao criar sessão.' });
+      return;
+    }
+
+    request.session.authenticated = true;
+    request.session.loginAt = nowISO();
+
+    request.session.save((saveError) => {
+      if (saveError) {
+        console.error('[AUTH] Erro ao salvar sessão:', saveError);
+        response.status(500).json({ error: 'Erro ao salvar sessão.' });
+        return;
+      }
+
+      sendLoginResponse(request, response, true, {
+        redirectTo: nextUrl,
+        payload: { ok: true, next: nextUrl },
+      });
+    });
+  });
+});
+
+app.get('/favicon.ico', (request, response) => {
+  response.status(204).end();
+});
+
+app.use(requireAuthentication);
+app.use(noStoreProtectedPages);
+
+app.get('/api/auth/me', (request, response) => {
+  response.json({
+    ok: true,
+    authenticated: true,
+    loginAt: request.session.loginAt || null,
+    environment: NODE_ENV,
+  });
+});
+
+app.post('/api/logout', (request, response) => {
+  request.session.destroy((error) => {
+    if (error) {
+      console.error('[AUTH] Erro ao encerrar sessão:', error);
+      response.status(500).json({ error: 'Erro ao encerrar sessão.' });
+      return;
+    }
+
+    response.clearCookie('quiet_progress_sid', {
+      httpOnly: true,
+      sameSite: 'lax',
+      secure: IS_PRODUCTION,
+      path: '/',
+    });
+
+    response.json({
+      ok: true,
+      redirectTo: '/login',
+    });
+  });
+});
+
+app.use(
+  express.static(PUBLIC_DIR, {
+    dotfiles: 'deny',
+    index: false,
+    fallthrough: true,
+  })
+);
 function isValidISODate(value) {
   return /^\d{4}-\d{2}-\d{2}$/.test(String(value || ''));
 }
@@ -87,7 +479,9 @@ function sanitizePriority(value) {
 }
 
 function sanitizeStatus(value) {
-  return String(value || '').toUpperCase() === 'CONCLUIDO' ? 'CONCLUIDO' : 'PENDENTE';
+  return String(value || '').toUpperCase() === 'CONCLUIDO'
+    ? 'CONCLUIDO'
+    : 'PENDENTE';
 }
 
 function addDaysISO(dateISO, amount) {
@@ -108,7 +502,7 @@ function getMonthRange(monthValue) {
     monthValue,
     start,
     end,
-    totalDays: last.getDate()
+    totalDays: last.getDate(),
   };
 }
 
@@ -135,7 +529,7 @@ function getMonthWeeks(monthValue) {
     current.push({
       date,
       day,
-      weekday
+      weekday,
     });
 
     if (current.length === 7) {
@@ -152,7 +546,7 @@ function getMonthWeeks(monthValue) {
   return weeks.map((days, index) => ({
     index,
     label: `Semana ${index + 1}`,
-    days
+    days,
   }));
 }
 
@@ -163,14 +557,14 @@ function getWeekForDate(dateISO) {
     return {
       date,
       weekday: index,
-      day: Number(date.slice(-2))
+      day: Number(date.slice(-2)),
     };
   });
 
   return {
     start,
     end: days[6].date,
-    days
+    days,
   };
 }
 
@@ -275,7 +669,7 @@ function normalizeMindset(row) {
     humor: Number(row.humor || 2),
     notas: row.notas || '',
     created_at: row.created_at,
-    updated_at: row.updated_at
+    updated_at: row.updated_at,
   };
 }
 
@@ -291,7 +685,7 @@ function normalizeTask(row) {
     ativo: Number(row.ativo) === 1,
     ordem: Number(row.ordem || 0),
     created_at: row.created_at,
-    updated_at: row.updated_at
+    updated_at: row.updated_at,
   };
 }
 
@@ -314,10 +708,14 @@ async function getDayPayload(date, options = {}) {
     [date]
   );
 
-  const logMap = new Map(logs.map((row) => [Number(row.habito_id), Number(row.concluido) === 1]));
+  const logMap = new Map(
+    logs.map((row) => [Number(row.habito_id), Number(row.concluido) === 1])
+  );
 
   const habits = allHabits
-    .filter((habit) => includeInactiveWithLogs || dateIsWithinHabit(habit, date))
+    .filter(
+      (habit) => includeInactiveWithLogs || dateIsWithinHabit(habit, date)
+    )
     .map((habit) => ({
       id: habit.id,
       titulo: habit.titulo,
@@ -328,7 +726,7 @@ async function getDayPayload(date, options = {}) {
       data_inicio: habit.data_inicio,
       data_fim: habit.data_fim,
       disabledForDate: !dateIsWithinHabit(habit, date),
-      concluido: logMap.get(Number(habit.id)) === true
+      concluido: logMap.get(Number(habit.id)) === true,
     }));
 
   const tasks = (
@@ -368,8 +766,8 @@ async function getDayPayload(date, options = {}) {
       tasksPercent,
       totalDone,
       totalItems,
-      totalPercent: calcPercent(totalDone, totalItems)
-    }
+      totalPercent: calcPercent(totalDone, totalItems),
+    },
   };
 }
 
@@ -388,26 +786,30 @@ async function getDashboardMonth(monthValue) {
     [range.start, range.end]
   );
 
-  const tasks = (await all(
-    `
+  const tasks = (
+    await all(
+      `
     SELECT *
     FROM tarefas
     WHERE data_ref BETWEEN ? AND ?
       AND ativo = 1
     ORDER BY data_ref ASC, ordem ASC, id ASC
     `,
-    [range.start, range.end]
-  )).map(normalizeTask);
+      [range.start, range.end]
+    )
+  ).map(normalizeTask);
 
-  const mindsets = (await all(
-    `
+  const mindsets = (
+    await all(
+      `
     SELECT *
     FROM mindset
     WHERE data_ref BETWEEN ? AND ?
     ORDER BY data_ref ASC
     `,
-    [range.start, range.end]
-  )).map(normalizeMindset);
+      [range.start, range.end]
+    )
+  ).map(normalizeMindset);
 
   const logMap = {};
   const habitStats = {};
@@ -420,7 +822,7 @@ async function getDashboardMonth(monthValue) {
       cor: habit.cor,
       possibleDays: 0,
       doneDays: 0,
-      percent: 0
+      percent: 0,
     };
   });
 
@@ -439,7 +841,7 @@ async function getDashboardMonth(monthValue) {
       totalDone: 0,
       totalItems: 0,
       percent: 0,
-      hasNote: false
+      hasNote: false,
     };
   }
 
@@ -450,7 +852,8 @@ async function getDashboardMonth(monthValue) {
 
   Object.keys(days).forEach((date) => {
     habits.forEach((habit) => {
-      const visibleForDate = Number(habit.ativo) === 1 && dateIsWithinHabit(habit, date);
+      const visibleForDate =
+        Number(habit.ativo) === 1 && dateIsWithinHabit(habit, date);
       const hasHistoricalLog = logMap[`${habit.id}:${date}`] !== undefined;
 
       if (visibleForDate || hasHistoricalLog) {
@@ -480,7 +883,9 @@ async function getDashboardMonth(monthValue) {
   mindsets.forEach((mindset) => {
     mindsetByDate[mindset.data_ref] = mindset;
     if (days[mindset.data_ref]) {
-      days[mindset.data_ref].hasNote = Boolean(String(mindset.notas || '').trim());
+      days[mindset.data_ref].hasNote = Boolean(
+        String(mindset.notas || '').trim()
+      );
     }
   });
 
@@ -513,12 +918,18 @@ async function getDashboardMonth(monthValue) {
       label: week.label,
       totalDone,
       totalItems,
-      percent: calcPercent(totalDone, totalItems)
+      percent: calcPercent(totalDone, totalItems),
     };
   });
 
-  const monthDone = Object.values(days).reduce((sum, day) => sum + day.totalDone, 0);
-  const monthItems = Object.values(days).reduce((sum, day) => sum + day.totalItems, 0);
+  const monthDone = Object.values(days).reduce(
+    (sum, day) => sum + day.totalDone,
+    0
+  );
+  const monthItems = Object.values(days).reduce(
+    (sum, day) => sum + day.totalItems,
+    0
+  );
 
   return {
     month: range.monthValue,
@@ -533,7 +944,7 @@ async function getDashboardMonth(monthValue) {
       cor: habit.cor,
       ordem: Number(habit.ordem || 0),
       data_inicio: habit.data_inicio,
-      data_fim: habit.data_fim
+      data_fim: habit.data_fim,
     })),
     logMap,
     tasksByDate,
@@ -544,8 +955,8 @@ async function getDashboardMonth(monthValue) {
       monthItems,
       monthPercent: calcPercent(monthDone, monthItems),
       weekStats,
-      habitStats: Object.values(habitStats)
-    }
+      habitStats: Object.values(habitStats),
+    },
   };
 }
 
@@ -556,12 +967,12 @@ async function getStatsMonth(monthValue) {
 
   const tasksDoneSeries = dates.map((date) => ({
     date,
-    total: dashboard.days[date].taskDone
+    total: dashboard.days[date].taskDone,
   }));
 
   const dayProgressSeries = dates.map((date) => ({
     date,
-    percent: dashboard.days[date].percent
+    percent: dashboard.days[date].percent,
   }));
 
   const mindsetSeries = dates.map((date) => {
@@ -572,7 +983,7 @@ async function getStatsMonth(monthValue) {
       energia: mindset ? Number(mindset.energia) : null,
       foco: mindset ? Number(mindset.foco) : null,
       motivacao: mindset ? Number(mindset.motivacao) : null,
-      humor: mindset ? Number(mindset.humor) : null
+      humor: mindset ? Number(mindset.humor) : null,
     };
   });
 
@@ -594,13 +1005,15 @@ async function getStatsMonth(monthValue) {
     prioridade: row.prioridade || 'MÉDIA',
     total: Number(row.total || 0),
     done: Number(row.done || 0),
-    percent: calcPercent(Number(row.done || 0), Number(row.total || 0))
+    percent: calcPercent(Number(row.done || 0), Number(row.total || 0)),
   }));
 
   const validMindsets = mindsetSeries.filter((item) => item.energia !== null);
   const avg = (key) => {
     if (!validMindsets.length) return 0;
-    const value = validMindsets.reduce((sum, item) => sum + Number(item[key] || 0), 0) / validMindsets.length;
+    const value =
+      validMindsets.reduce((sum, item) => sum + Number(item[key] || 0), 0) /
+      validMindsets.length;
     return Math.round(value * 10) / 10;
   };
 
@@ -617,8 +1030,8 @@ async function getStatsMonth(monthValue) {
       energia: avg('energia'),
       foco: avg('foco'),
       motivacao: avg('motivacao'),
-      humor: avg('humor')
-    }
+      humor: avg('humor'),
+    },
   };
 }
 
@@ -656,27 +1069,6 @@ ${day.tasks.length ? day.tasks.map(markdownTaskLine).join('\n') : '- Nenhuma tar
 ${day.mindset.notas ? day.mindset.notas : '_Sem nota registrada._'}
 `;
 }
-
-app.get('/api/health', (request, response) => {
-  const memory = process.memoryUsage();
-
-  response.json({
-    status: 'ok',
-    uptime: Math.round(process.uptime()),
-    node: process.version,
-    platform: process.platform,
-    arch: process.arch,
-    databasePath: DB_PATH,
-    databaseExists: databaseExists(),
-    today: todayISO(),
-    memory: {
-      rss: memory.rss,
-      heapTotal: memory.heapTotal,
-      heapUsed: memory.heapUsed,
-      external: memory.external
-    }
-  });
-});
 
 app.get('/api/dashboard', async (request, response) => {
   try {
@@ -728,10 +1120,12 @@ app.post('/api/habits', async (request, response) => {
         request.body.ativo === false ? 0 : 1,
         request.body.cor ? String(request.body.cor).trim() : null,
         clampNumber(request.body.ordem, 0, 9999, 0),
-        isValidISODate(request.body.data_inicio) ? request.body.data_inicio : null,
+        isValidISODate(request.body.data_inicio)
+          ? request.body.data_inicio
+          : null,
         isValidISODate(request.body.data_fim) ? request.body.data_fim : null,
         now,
-        now
+        now,
       ]
     );
 
@@ -739,7 +1133,7 @@ app.post('/api/habits', async (request, response) => {
 
     response.status(201).json({
       ok: true,
-      habit
+      habit,
     });
   } catch (error) {
     console.error(error);
@@ -749,20 +1143,49 @@ app.post('/api/habits', async (request, response) => {
 
 app.patch('/api/habits/:id', async (request, response) => {
   try {
-    const current = await get(`SELECT * FROM habitos WHERE id = ?`, [request.params.id]);
+    const current = await get(`SELECT * FROM habitos WHERE id = ?`, [
+      request.params.id,
+    ]);
 
     if (!current) {
       return response.status(404).json({ error: 'Hábito não encontrado.' });
     }
 
     const next = {
-      titulo: request.body.titulo !== undefined && String(request.body.titulo).trim() ? String(request.body.titulo).trim() : current.titulo,
-      subtitulo: request.body.subtitulo !== undefined ? String(request.body.subtitulo || '').trim() : current.subtitulo,
-      ativo: request.body.ativo !== undefined ? Number(Boolean(request.body.ativo)) : Number(current.ativo),
-      cor: request.body.cor !== undefined ? (request.body.cor ? String(request.body.cor).trim() : null) : current.cor,
-      ordem: request.body.ordem !== undefined ? clampNumber(request.body.ordem, 0, 9999, Number(current.ordem || 0)) : Number(current.ordem || 0),
-      data_inicio: request.body.data_inicio !== undefined ? (isValidISODate(request.body.data_inicio) ? request.body.data_inicio : null) : current.data_inicio,
-      data_fim: request.body.data_fim !== undefined ? (isValidISODate(request.body.data_fim) ? request.body.data_fim : null) : current.data_fim
+      titulo:
+        request.body.titulo !== undefined && String(request.body.titulo).trim()
+          ? String(request.body.titulo).trim()
+          : current.titulo,
+      subtitulo:
+        request.body.subtitulo !== undefined
+          ? String(request.body.subtitulo || '').trim()
+          : current.subtitulo,
+      ativo:
+        request.body.ativo !== undefined
+          ? Number(Boolean(request.body.ativo))
+          : Number(current.ativo),
+      cor:
+        request.body.cor !== undefined
+          ? request.body.cor
+            ? String(request.body.cor).trim()
+            : null
+          : current.cor,
+      ordem:
+        request.body.ordem !== undefined
+          ? clampNumber(request.body.ordem, 0, 9999, Number(current.ordem || 0))
+          : Number(current.ordem || 0),
+      data_inicio:
+        request.body.data_inicio !== undefined
+          ? isValidISODate(request.body.data_inicio)
+            ? request.body.data_inicio
+            : null
+          : current.data_inicio,
+      data_fim:
+        request.body.data_fim !== undefined
+          ? isValidISODate(request.body.data_fim)
+            ? request.body.data_fim
+            : null
+          : current.data_fim,
     };
 
     await run(
@@ -780,15 +1203,17 @@ app.patch('/api/habits/:id', async (request, response) => {
         next.data_inicio,
         next.data_fim,
         nowISO(),
-        request.params.id
+        request.params.id,
       ]
     );
 
-    const habit = await get(`SELECT * FROM habitos WHERE id = ?`, [request.params.id]);
+    const habit = await get(`SELECT * FROM habitos WHERE id = ?`, [
+      request.params.id,
+    ]);
 
     response.json({
       ok: true,
-      habit
+      habit,
     });
   } catch (error) {
     console.error(error);
@@ -798,7 +1223,9 @@ app.patch('/api/habits/:id', async (request, response) => {
 
 app.delete('/api/habits/:id', async (request, response) => {
   try {
-    const current = await get(`SELECT * FROM habitos WHERE id = ?`, [request.params.id]);
+    const current = await get(`SELECT * FROM habitos WHERE id = ?`, [
+      request.params.id,
+    ]);
 
     if (!current) {
       return response.status(404).json({ error: 'Hábito não encontrado.' });
@@ -815,7 +1242,7 @@ app.delete('/api/habits/:id', async (request, response) => {
 
     response.json({
       ok: true,
-      deletedId: Number(request.params.id)
+      deletedId: Number(request.params.id),
     });
   } catch (error) {
     console.error(error);
@@ -825,7 +1252,9 @@ app.delete('/api/habits/:id', async (request, response) => {
 
 app.put('/api/habits/:id/log', async (request, response) => {
   try {
-    const habit = await get(`SELECT * FROM habitos WHERE id = ?`, [request.params.id]);
+    const habit = await get(`SELECT * FROM habitos WHERE id = ?`, [
+      request.params.id,
+    ]);
 
     if (!habit) {
       return response.status(404).json({ error: 'Hábito não encontrado.' });
@@ -851,7 +1280,7 @@ app.put('/api/habits/:id/log', async (request, response) => {
       ok: true,
       habitId: Number(request.params.id),
       data_ref: date,
-      concluido: Boolean(concluido)
+      concluido: Boolean(concluido),
     });
   } catch (error) {
     console.error(error);
@@ -883,13 +1312,15 @@ app.post('/api/tasks', async (request, response) => {
         String(request.body.tipo || 'task').trim() || 'task',
         clampNumber(request.body.ordem, 0, 9999, 0),
         now,
-        now
+        now,
       ]
     );
 
     response.status(201).json({
       ok: true,
-      task: normalizeTask(await get(`SELECT * FROM tarefas WHERE id = ?`, [result.id]))
+      task: normalizeTask(
+        await get(`SELECT * FROM tarefas WHERE id = ?`, [result.id])
+      ),
     });
   } catch (error) {
     console.error(error);
@@ -899,19 +1330,39 @@ app.post('/api/tasks', async (request, response) => {
 
 app.patch('/api/tasks/:id', async (request, response) => {
   try {
-    const current = await get(`SELECT * FROM tarefas WHERE id = ?`, [request.params.id]);
+    const current = await get(`SELECT * FROM tarefas WHERE id = ?`, [
+      request.params.id,
+    ]);
 
     if (!current || Number(current.ativo) !== 1) {
       return response.status(404).json({ error: 'Tarefa não encontrada.' });
     }
 
     const next = {
-      titulo: request.body.titulo !== undefined && String(request.body.titulo).trim() ? String(request.body.titulo).trim() : current.titulo,
-      descricao: request.body.descricao !== undefined ? String(request.body.descricao || '').trim() : current.descricao,
-      prioridade: request.body.prioridade !== undefined ? sanitizePriority(request.body.prioridade) : current.prioridade,
-      status: request.body.status !== undefined ? sanitizeStatus(request.body.status) : current.status,
-      data_ref: request.body.data_ref !== undefined ? normalizeDate(request.body.data_ref) : current.data_ref,
-      ordem: request.body.ordem !== undefined ? clampNumber(request.body.ordem, 0, 9999, Number(current.ordem || 0)) : Number(current.ordem || 0)
+      titulo:
+        request.body.titulo !== undefined && String(request.body.titulo).trim()
+          ? String(request.body.titulo).trim()
+          : current.titulo,
+      descricao:
+        request.body.descricao !== undefined
+          ? String(request.body.descricao || '').trim()
+          : current.descricao,
+      prioridade:
+        request.body.prioridade !== undefined
+          ? sanitizePriority(request.body.prioridade)
+          : current.prioridade,
+      status:
+        request.body.status !== undefined
+          ? sanitizeStatus(request.body.status)
+          : current.status,
+      data_ref:
+        request.body.data_ref !== undefined
+          ? normalizeDate(request.body.data_ref)
+          : current.data_ref,
+      ordem:
+        request.body.ordem !== undefined
+          ? clampNumber(request.body.ordem, 0, 9999, Number(current.ordem || 0))
+          : Number(current.ordem || 0),
     };
 
     await run(
@@ -928,13 +1379,15 @@ app.patch('/api/tasks/:id', async (request, response) => {
         next.data_ref,
         next.ordem,
         nowISO(),
-        request.params.id
+        request.params.id,
       ]
     );
 
     response.json({
       ok: true,
-      task: normalizeTask(await get(`SELECT * FROM tarefas WHERE id = ?`, [request.params.id]))
+      task: normalizeTask(
+        await get(`SELECT * FROM tarefas WHERE id = ?`, [request.params.id])
+      ),
     });
   } catch (error) {
     console.error(error);
@@ -944,7 +1397,9 @@ app.patch('/api/tasks/:id', async (request, response) => {
 
 app.delete('/api/tasks/:id', async (request, response) => {
   try {
-    const current = await get(`SELECT * FROM tarefas WHERE id = ?`, [request.params.id]);
+    const current = await get(`SELECT * FROM tarefas WHERE id = ?`, [
+      request.params.id,
+    ]);
 
     if (!current || Number(current.ativo) !== 1) {
       return response.status(404).json({ error: 'Tarefa não encontrada.' });
@@ -961,7 +1416,7 @@ app.delete('/api/tasks/:id', async (request, response) => {
 
     response.json({
       ok: true,
-      deletedId: Number(request.params.id)
+      deletedId: Number(request.params.id),
     });
   } catch (error) {
     console.error(error);
@@ -973,7 +1428,10 @@ app.put('/api/tasks/:id/status', async (request, response) => {
   try {
     const status = sanitizeStatus(request.body.status);
 
-    const current = await get(`SELECT * FROM tarefas WHERE id = ? AND ativo = 1`, [request.params.id]);
+    const current = await get(
+      `SELECT * FROM tarefas WHERE id = ? AND ativo = 1`,
+      [request.params.id]
+    );
 
     if (!current) {
       return response.status(404).json({ error: 'Tarefa não encontrada.' });
@@ -990,7 +1448,9 @@ app.put('/api/tasks/:id/status', async (request, response) => {
 
     response.json({
       ok: true,
-      task: normalizeTask(await get(`SELECT * FROM tarefas WHERE id = ?`, [request.params.id]))
+      task: normalizeTask(
+        await get(`SELECT * FROM tarefas WHERE id = ?`, [request.params.id])
+      ),
     });
   } catch (error) {
     console.error(error);
@@ -1024,13 +1484,13 @@ app.put('/api/mindset/:date', async (request, response) => {
         clampNumber(request.body.humor, 1, 5, 2),
         String(request.body.notas || ''),
         now,
-        now
+        now,
       ]
     );
 
     response.json({
       ok: true,
-      mindset: await getMindsetForDate(date)
+      mindset: await getMindsetForDate(date),
     });
   } catch (error) {
     console.error(error);
@@ -1041,7 +1501,9 @@ app.put('/api/mindset/:date', async (request, response) => {
 app.get('/api/checkins', async (request, response) => {
   try {
     const month = normalizeMonth(request.query.month);
-    const q = String(request.query.q || '').trim().toLowerCase();
+    const q = String(request.query.q || '')
+      .trim()
+      .toLowerCase();
     const { start, end } = getMonthRange(month);
 
     let rows = await all(
@@ -1056,13 +1518,17 @@ app.get('/api/checkins', async (request, response) => {
     );
 
     if (q) {
-      rows = rows.filter((row) => String(row.notas || '').toLowerCase().includes(q));
+      rows = rows.filter((row) =>
+        String(row.notas || '')
+          .toLowerCase()
+          .includes(q)
+      );
     }
 
     response.json({
       ok: true,
       month,
-      items: rows.map(normalizeMindset)
+      items: rows.map(normalizeMindset),
     });
   } catch (error) {
     console.error(error);
@@ -1073,7 +1539,9 @@ app.get('/api/checkins', async (request, response) => {
 app.get('/api/notes', async (request, response) => {
   try {
     const month = normalizeMonth(request.query.month);
-    const q = String(request.query.q || '').trim().toLowerCase();
+    const q = String(request.query.q || '')
+      .trim()
+      .toLowerCase();
     const { start, end } = getMonthRange(month);
 
     let rows = await all(
@@ -1090,13 +1558,17 @@ app.get('/api/notes', async (request, response) => {
     );
 
     if (q) {
-      rows = rows.filter((row) => String(row.notas || '').toLowerCase().includes(q));
+      rows = rows.filter((row) =>
+        String(row.notas || '')
+          .toLowerCase()
+          .includes(q)
+      );
     }
 
     response.json({
       ok: true,
       month,
-      items: rows.map(normalizeMindset)
+      items: rows.map(normalizeMindset),
     });
   } catch (error) {
     console.error(error);
@@ -1110,7 +1582,7 @@ app.get('/api/day/:date/export-md', async (request, response) => {
     response.json({
       ok: true,
       date,
-      markdown: await buildDayMarkdown(date)
+      markdown: await buildDayMarkdown(date),
     });
   } catch (error) {
     console.error(error);
@@ -1130,56 +1602,64 @@ app.get('/api/day/:date/markdown', async (request, response) => {
 
 app.get('/api/backup', (request, response) => {
   if (!fs.existsSync(DB_PATH)) {
-    return response.status(404).json({ error: 'Banco de dados não encontrado.' });
+    return response
+      .status(404)
+      .json({ error: 'Banco de dados não encontrado.' });
   }
 
   response.download(DB_PATH, `quiet_progress_${todayISO()}.db`);
 });
 
-app.post('/api/sistema/restore', upload.single('database'), async (request, response) => {
-  const uploadedPath = request.file?.path;
-
-  try {
-    if (!request.file) {
-      return response.status(400).json({ error: 'Arquivo .db é obrigatório.' });
-    }
-
-    const backupBeforeRestore = `${DB_PATH}.before_restore_${Date.now()}.bak`;
-
-    await closeDatabase();
-
-    if (fs.existsSync(DB_PATH)) {
-      fs.copyFileSync(DB_PATH, backupBeforeRestore);
-    }
-
-    fs.copyFileSync(uploadedPath, DB_PATH);
-
-    connectDatabase();
-    await initDatabase();
-
-    response.json({
-      ok: true,
-      message: 'Banco restaurado com sucesso.'
-    });
-  } catch (error) {
-    console.error(error);
+app.post(
+  '/api/sistema/restore',
+  upload.single('database'),
+  async (request, response) => {
+    const uploadedPath = request.file?.path;
 
     try {
-      connectDatabase();
-    } catch (reconnectError) {
-      console.error('[Restore] Falha ao reconectar banco:', reconnectError);
-    }
+      if (!request.file) {
+        return response
+          .status(400)
+          .json({ error: 'Arquivo .db é obrigatório.' });
+      }
 
-    response.status(500).json({
-      error: 'Erro ao restaurar banco de dados.',
-      details: error.message
-    });
-  } finally {
-    if (uploadedPath && fs.existsSync(uploadedPath)) {
-      fs.unlinkSync(uploadedPath);
+      const backupBeforeRestore = `${DB_PATH}.before_restore_${Date.now()}.bak`;
+
+      await closeDatabase();
+
+      if (fs.existsSync(DB_PATH)) {
+        fs.copyFileSync(DB_PATH, backupBeforeRestore);
+      }
+
+      fs.copyFileSync(uploadedPath, DB_PATH);
+
+      connectDatabase();
+      await initDatabase();
+
+      response.json({
+        ok: true,
+        message: 'Banco restaurado com sucesso.',
+      });
+    } catch (error) {
+      console.error(error);
+
+      try {
+        connectDatabase();
+      } catch (reconnectError) {
+        console.error('[Restore] Falha ao reconectar banco:', reconnectError);
+      }
+
+      response.status(500).json({
+        error: 'Erro ao restaurar banco de dados.',
+        details: error.message,
+      });
+    } finally {
+      if (uploadedPath && fs.existsSync(uploadedPath)) {
+        fs.unlinkSync(uploadedPath);
+      }
     }
   }
-});
+);
 
 app.get('*', (request, response) => {
   response.sendFile(path.join(__dirname, '..', 'public', 'index.html'));
@@ -1187,12 +1667,13 @@ app.get('*', (request, response) => {
 
 initDatabase()
   .then(() => {
-    app.listen(PORT, '0.0.0.0', () => {
+    app.listen(PORT, HOST, () => {
       const urls = getLocalNetworkUrls(PORT);
 
       console.log('');
       console.log('==========================================');
       console.log(' Quiet Progress v3 Temporal está online');
+      console.log(` Ambiente: ${NODE_ENV}`);
       console.log('==========================================');
       console.log(` Local: http://localhost:${PORT}`);
 

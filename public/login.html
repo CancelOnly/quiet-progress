@@ -1,0 +1,246 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, viewport-fit=cover"
+    />
+    <meta name="theme-color" content="#000000" />
+    <title>Quiet Progress // Login</title>
+
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800;900&display=swap"
+      rel="stylesheet"
+    />
+
+    <style>
+      :root {
+        --bg: #000;
+        --panel: #111;
+        --text: #f5f7fa;
+        --muted: #a2a7b4;
+        --success: #deff9a;
+        --focus: #11caa0;
+        --action: #bc84ee;
+        --danger: #ff7a90;
+        --glow-success: 0 0 28px rgba(222, 255, 154, 0.22);
+        --glow-focus: 0 0 28px rgba(17, 202, 160, 0.22);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        width: 100%;
+        min-height: 100%;
+        margin: 0;
+        overflow-x: hidden;
+        background: var(--bg);
+        color: var(--text);
+        font-family: Inter, system-ui, sans-serif;
+      }
+
+      body {
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        padding: 18px;
+        background:
+          radial-gradient(
+            circle at top left,
+            rgba(188, 132, 238, 0.16),
+            transparent 30rem
+          ),
+          radial-gradient(
+            circle at bottom right,
+            rgba(17, 202, 160, 0.14),
+            transparent 30rem
+          ),
+          #000;
+      }
+
+      .login-card {
+        width: min(420px, 100%);
+        padding: 26px;
+        border-radius: 28px;
+        background: linear-gradient(
+          145deg,
+          rgba(26, 26, 26, 0.96),
+          rgba(8, 8, 8, 0.98)
+        );
+        box-shadow:
+          0 30px 100px rgba(0, 0, 0, 0.72),
+          inset 0 1px 0 rgba(255, 255, 255, 0.055);
+      }
+
+      .eyebrow {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 12px;
+        border-radius: 999px;
+        color: var(--success);
+        background: rgba(222, 255, 154, 0.075);
+        box-shadow: var(--glow-success);
+        font-size: 11px;
+        font-weight: 900;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+      }
+
+      .dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 99px;
+        background: var(--success);
+        box-shadow: 0 0 16px rgba(222, 255, 154, 0.8);
+      }
+
+      h1 {
+        margin: 22px 0 8px;
+        font-size: clamp(2.2rem, 12vw, 4rem);
+        line-height: 0.9;
+        letter-spacing: -0.08em;
+      }
+
+      p {
+        margin: 0 0 22px;
+        color: var(--muted);
+        line-height: 1.6;
+        font-size: 14px;
+      }
+
+      form {
+        display: grid;
+        gap: 12px;
+      }
+
+      label {
+        color: var(--muted);
+        font-size: 12px;
+        font-weight: 900;
+        text-transform: uppercase;
+        letter-spacing: 0.12em;
+      }
+
+      input {
+        width: 100%;
+        min-height: 52px;
+        margin-top: 8px;
+        padding: 0 15px;
+        border: 0;
+        outline: 0;
+        border-radius: 16px;
+        color: var(--text);
+        background: #080808;
+        box-shadow:
+          inset 0 0 0 1px rgba(255, 255, 255, 0.08),
+          inset 0 0 24px rgba(0, 0, 0, 0.5);
+        font: inherit;
+        font-size: 16px;
+      }
+
+      input:focus {
+        box-shadow:
+          inset 0 0 0 1px rgba(17, 202, 160, 0.5),
+          var(--glow-focus);
+      }
+
+      button {
+        min-height: 52px;
+        border: 0;
+        border-radius: 999px;
+        color: #000;
+        background: var(--success);
+        box-shadow: var(--glow-success);
+        font: inherit;
+        font-size: 13px;
+        font-weight: 900;
+        text-transform: uppercase;
+        letter-spacing: 0.1em;
+        cursor: pointer;
+      }
+
+      button:disabled {
+        opacity: 0.55;
+        cursor: wait;
+      }
+
+      .error {
+        min-height: 20px;
+        color: var(--danger);
+        font-size: 13px;
+        font-weight: 800;
+        line-height: 1.4;
+      }
+
+      .hint {
+        margin-top: 18px;
+        color: rgba(162, 167, 180, 0.72);
+        font-size: 12px;
+        line-height: 1.5;
+      }
+
+      @media (max-width: 430px) {
+        body {
+          align-items: start;
+          padding-top: 42px;
+        }
+
+        .login-card {
+          padding: 22px;
+          border-radius: 24px;
+        }
+      }
+    </style>
+  </head>
+
+  <body>
+    <main class="login-card">
+      <div class="eyebrow">
+        <span class="dot"></span>
+        Secure Local Access
+      </div>
+
+      <h1>Quiet Progress</h1>
+      <p>Digite a senha local para acessar o dashboard.</p>
+
+      <form id="loginForm" autocomplete="on" method="post" action="/login">
+        <input type="hidden" name="next" value="{{NEXT_VALUE}}" />
+        <label for="password">
+          Senha
+          <input
+            id="password"
+            name="password"
+            type="password"
+            autocomplete="current-password"
+            inputmode="text"
+            enterkeyhint="go"
+            required
+            autofocus
+          />
+        </label>
+
+        <button id="loginButton" type="submit">Entrar</button>
+
+        <div
+          class="error"
+          id="loginError"
+          role="alert"
+          aria-live="polite"
+        >{{ERROR_MESSAGE}}</div>
+      </form>
+
+      <div class="hint">
+        A sessão fica salva por cookie seguro. Se trocar a senha no servidor,
+        faça login novamente.
+      </div>
+    </main>
+    <script src="/login.js" defer></script>
+  </body>
+</html>

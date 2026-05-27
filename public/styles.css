@@ -3824,3 +3824,31 @@ video {
     overflow-x: visible;
   }
 }
+
+/* === SPRINT 1 SECURITY UI === */
+.auth-status {
+  margin-bottom: 10px;
+}
+
+.auth-status.subtle {
+  color: var(--muted-2);
+  background: rgba(255, 255, 255, 0.035);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.045);
+}
+
+.auth-status.subtle span:first-child {
+  color: var(--focus);
+  text-shadow: 0 0 14px rgba(17, 202, 160, 0.8);
+}
+
+.logout-btn {
+  color: var(--muted-2);
+  background: rgba(255, 122, 144, 0.055);
+  box-shadow: inset 0 0 0 1px rgba(255, 122, 144, 0.13);
+}
+
+.logout-btn:hover {
+  color: #000;
+  background: var(--danger);
+  box-shadow: 0 0 24px rgba(255, 122, 144, 0.25);
+}
