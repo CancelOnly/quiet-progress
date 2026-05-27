@@ -8,6 +8,7 @@ const multer = require('multer');
 const session = require('express-session');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
+const webpush = require('web-push');
 
 const {
   DB_PATH,
@@ -35,6 +36,23 @@ const APP_PASSWORD = process.env.APP_PASSWORD || 'trocar-essa-senha';
 const SESSION_SECRET = process.env.SESSION_SECRET || 'trocar-esse-segredo';
 const SESSION_MAX_AGE_DAYS = Number(process.env.SESSION_MAX_AGE_DAYS || 30);
 const SESSION_MAX_AGE_MS = SESSION_MAX_AGE_DAYS * 24 * 60 * 60 * 1000;
+
+const VAPID_PUBLIC_KEY = process.env.VAPID_PUBLIC_KEY || '';
+const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY || '';
+const VAPID_SUBJECT =
+  process.env.VAPID_SUBJECT || 'mailto:seu-email@example.com';
+const PUSH_SCHEDULER_INTERVAL_MS = Number(
+  process.env.PUSH_SCHEDULER_INTERVAL_MS || 30000
+);
+const WEB_PUSH_READY = Boolean(VAPID_PUBLIC_KEY && VAPID_PRIVATE_KEY);
+
+if (WEB_PUSH_READY) {
+  webpush.setVapidDetails(VAPID_SUBJECT, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
+} else {
+  console.warn(
+    '[PUSH] VAPID keys ausentes. PWA continua funcionando, mas Web Push fica desativado até configurar o .env.'
+  );
+}
 
 if (
   IS_PRODUCTION &&
@@ -174,13 +192,14 @@ const PUBLIC_PATHS = new Set([
   '/login',
   '/login.html',
   '/login.js',
+  '/service-worker.js',
   '/manifest.json',
   '/favicon.ico',
   '/api/health',
 ]);
 
 function requireAuthentication(request, response, next) {
-  if (PUBLIC_PATHS.has(request.path)) {
+  if (PUBLIC_PATHS.has(request.path) || request.path.startsWith('/icons/')) {
     next();
     return;
   }
@@ -256,6 +275,8 @@ app.use(
         fontSrc: ["'self'", 'https://fonts.gstatic.com'],
         imgSrc: ["'self'", 'data:'],
         connectSrc: ["'self'"],
+        workerSrc: ["'self'"],
+        manifestSrc: ["'self'"],
 
         /*
           Importante:
@@ -441,6 +462,449 @@ app.use(
     fallthrough: true,
   })
 );
+
+
+function isSecurePublicBaseUrl() {
+  return PUBLIC_BASE_URL.startsWith('https://') || PUBLIC_BASE_URL.includes('localhost');
+}
+
+function parseDaysOfWeek(value) {
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => Number(item))
+      .filter((item) => Number.isInteger(item) && item >= 0 && item <= 6);
+  }
+
+  if (typeof value === 'string') {
+    try {
+      return parseDaysOfWeek(JSON.parse(value));
+    } catch {
+      return value
+        .split(',')
+        .map((item) => Number(item.trim()))
+        .filter((item) => Number.isInteger(item) && item >= 0 && item <= 6);
+    }
+  }
+
+  return [0, 1, 2, 3, 4, 5, 6];
+}
+
+function normalizeReminder(row) {
+  return {
+    id: row.id,
+    title: row.title,
+    message: row.message,
+    type: row.type,
+    time: row.time,
+    days_of_week: parseDaysOfWeek(row.days_of_week),
+    enabled: Number(row.enabled) === 1,
+    route: row.route || '/',
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+    last_sent_at: row.last_sent_at,
+  };
+}
+
+function normalizeReminderBody(body, current = {}) {
+  const title = String(body.title ?? current.title ?? '').trim();
+  const message = String(body.message ?? current.message ?? '').trim();
+  const type = String(body.type ?? current.type ?? 'custom').trim() || 'custom';
+  const time = String(body.time ?? current.time ?? '21:30').trim();
+  const route = String(body.route ?? current.route ?? '/').trim() || '/';
+  const days = parseDaysOfWeek(body.days_of_week ?? current.days_of_week);
+  const enabled =
+    body.enabled === undefined ? Number(current.enabled ?? 1) === 1 : Boolean(body.enabled);
+
+  if (!title) {
+    throw new Error('title é obrigatório.');
+  }
+
+  if (!message) {
+    throw new Error('message é obrigatório.');
+  }
+
+  if (!/^\d{2}:\d{2}$/.test(time)) {
+    throw new Error('time deve estar no formato HH:mm.');
+  }
+
+  return {
+    title,
+    message,
+    type,
+    time,
+    route,
+    days_of_week: JSON.stringify(days.length ? days : [0, 1, 2, 3, 4, 5, 6]),
+    enabled: enabled ? 1 : 0,
+  };
+}
+
+function subscriptionFromRow(row) {
+  return {
+    endpoint: row.endpoint,
+    keys: {
+      p256dh: row.p256dh,
+      auth: row.auth,
+    },
+  };
+}
+
+async function sendPushToActiveSubscriptions(payload) {
+  if (!WEB_PUSH_READY) {
+    return {
+      sent: 0,
+      failed: 0,
+      skipped: true,
+      reason: 'VAPID keys ausentes.',
+    };
+  }
+
+  const subscriptions = await all(
+    `
+    SELECT *
+    FROM push_subscriptions
+    WHERE active = 1
+    ORDER BY id ASC
+    `
+  );
+
+  let sent = 0;
+  let failed = 0;
+
+  for (const subscription of subscriptions) {
+    try {
+      await webpush.sendNotification(
+        subscriptionFromRow(subscription),
+        JSON.stringify(payload)
+      );
+      sent += 1;
+    } catch (error) {
+      failed += 1;
+
+      const statusCode = Number(error.statusCode || error.status);
+
+      console.warn('[PUSH] Falha ao enviar notificação:', {
+        id: subscription.id,
+        statusCode,
+        message: error.message,
+      });
+
+      if (statusCode === 404 || statusCode === 410) {
+        await run(
+          `
+          UPDATE push_subscriptions
+          SET active = 0, updated_at = ?
+          WHERE id = ?
+          `,
+          [nowISO(), subscription.id]
+        );
+      }
+    }
+  }
+
+  return {
+    sent,
+    failed,
+    skipped: false,
+  };
+}
+
+async function runReminderTick() {
+  if (!WEB_PUSH_READY) return;
+
+  const now = new Date();
+  const hour = String(now.getHours()).padStart(2, '0');
+  const minute = String(now.getMinutes()).padStart(2, '0');
+  const time = `${hour}:${minute}`;
+  const dayOfWeek = now.getDay();
+  const minuteKey = now.toISOString().slice(0, 16);
+
+  const reminders = await all(
+    `
+    SELECT *
+    FROM reminders
+    WHERE enabled = 1
+      AND time = ?
+    ORDER BY id ASC
+    `,
+    [time]
+  );
+
+  for (const reminder of reminders) {
+    const days = parseDaysOfWeek(reminder.days_of_week);
+
+    if (!days.includes(dayOfWeek)) continue;
+    if (reminder.last_sent_at && reminder.last_sent_at.slice(0, 16) === minuteKey) {
+      continue;
+    }
+
+    const payload = {
+      title: reminder.title,
+      body: reminder.message,
+      icon: '/icons/icon-192.png',
+      badge: '/icons/badge-72.png',
+      route: reminder.route || '/',
+      reminderId: reminder.id,
+      type: reminder.type,
+      sentAt: now.toISOString(),
+    };
+
+    const result = await sendPushToActiveSubscriptions(payload);
+
+    await run(
+      `
+      UPDATE reminders
+      SET last_sent_at = ?, updated_at = ?
+      WHERE id = ?
+      `,
+      [now.toISOString(), now.toISOString(), reminder.id]
+    );
+
+    console.log('[PUSH] Lembrete processado:', {
+      reminderId: reminder.id,
+      title: reminder.title,
+      sent: result.sent,
+      failed: result.failed,
+      skipped: result.skipped,
+    });
+  }
+}
+
+function startReminderScheduler() {
+  let running = false;
+
+  setInterval(async () => {
+    if (running) return;
+
+    running = true;
+
+    try {
+      await runReminderTick();
+    } catch (error) {
+      console.error('[PUSH] Erro no scheduler:', error);
+    } finally {
+      running = false;
+    }
+  }, PUSH_SCHEDULER_INTERVAL_MS);
+
+  console.log(
+    `[PUSH] Scheduler iniciado. Intervalo: ${PUSH_SCHEDULER_INTERVAL_MS}ms. Web Push: ${WEB_PUSH_READY ? 'ativo' : 'aguardando VAPID'}`
+  );
+}
+
+app.get('/api/push/vapid-public-key', (request, response) => {
+  response.json({
+    ok: true,
+    publicKey: VAPID_PUBLIC_KEY,
+    configured: WEB_PUSH_READY,
+    secureContextRequired: true,
+    publicBaseUrl: PUBLIC_BASE_URL,
+    publicBaseUrlLooksSecure: isSecurePublicBaseUrl(),
+  });
+});
+
+app.post('/api/push/subscribe', async (request, response) => {
+  try {
+    const { endpoint, keys } = request.body || {};
+
+    if (!endpoint || !keys?.p256dh || !keys?.auth) {
+      response.status(400).json({ error: 'Subscription inválida.' });
+      return;
+    }
+
+    const now = nowISO();
+
+    await run(
+      `
+      INSERT INTO push_subscriptions (endpoint, p256dh, auth, user_agent, created_at, updated_at, active)
+      VALUES (?, ?, ?, ?, ?, ?, 1)
+      ON CONFLICT(endpoint)
+      DO UPDATE SET
+        p256dh = excluded.p256dh,
+        auth = excluded.auth,
+        user_agent = excluded.user_agent,
+        active = 1,
+        updated_at = excluded.updated_at
+      `,
+      [
+        endpoint,
+        keys.p256dh,
+        keys.auth,
+        String(request.get('user-agent') || ''),
+        now,
+        now,
+      ]
+    );
+
+    response.json({ ok: true });
+  } catch (error) {
+    console.error('[PUSH] Erro ao salvar subscription:', error);
+    response.status(500).json({ error: 'Erro ao salvar inscrição push.' });
+  }
+});
+
+app.post('/api/push/unsubscribe', async (request, response) => {
+  try {
+    const endpoint = String(request.body?.endpoint || '').trim();
+
+    if (!endpoint) {
+      response.status(400).json({ error: 'endpoint é obrigatório.' });
+      return;
+    }
+
+    await run(
+      `
+      UPDATE push_subscriptions
+      SET active = 0, updated_at = ?
+      WHERE endpoint = ?
+      `,
+      [nowISO(), endpoint]
+    );
+
+    response.json({ ok: true });
+  } catch (error) {
+    console.error('[PUSH] Erro ao desinscrever:', error);
+    response.status(500).json({ error: 'Erro ao remover inscrição push.' });
+  }
+});
+
+app.post('/api/push/test', async (request, response) => {
+  try {
+    const result = await sendPushToActiveSubscriptions({
+      title: 'Quiet Progress',
+      body: 'Notificação de teste funcionando.',
+      icon: '/icons/icon-192.png',
+      badge: '/icons/badge-72.png',
+      route: '/',
+      type: 'test',
+      sentAt: nowISO(),
+    });
+
+    response.json({
+      ok: true,
+      ...result,
+    });
+  } catch (error) {
+    console.error('[PUSH] Erro no teste:', error);
+    response.status(500).json({ error: 'Erro ao enviar notificação de teste.' });
+  }
+});
+
+app.get('/api/reminders', async (request, response) => {
+  try {
+    const rows = await all(
+      `
+      SELECT *
+      FROM reminders
+      ORDER BY time ASC, id ASC
+      `
+    );
+
+    response.json({
+      ok: true,
+      items: rows.map(normalizeReminder),
+    });
+  } catch (error) {
+    console.error('[PUSH] Erro ao listar reminders:', error);
+    response.status(500).json({ error: 'Erro ao carregar lembretes.' });
+  }
+});
+
+app.post('/api/reminders', async (request, response) => {
+  try {
+    const body = normalizeReminderBody(request.body);
+    const now = nowISO();
+
+    const result = await run(
+      `
+      INSERT INTO reminders (title, message, type, time, days_of_week, enabled, route, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+      [
+        body.title,
+        body.message,
+        body.type,
+        body.time,
+        body.days_of_week,
+        body.enabled,
+        body.route,
+        now,
+        now,
+      ]
+    );
+
+    const row = await get(`SELECT * FROM reminders WHERE id = ?`, [result.id]);
+
+    response.status(201).json({
+      ok: true,
+      reminder: normalizeReminder(row),
+    });
+  } catch (error) {
+    console.error('[PUSH] Erro ao criar reminder:', error);
+    response.status(400).json({ error: error.message || 'Erro ao criar lembrete.' });
+  }
+});
+
+app.patch('/api/reminders/:id', async (request, response) => {
+  try {
+    const current = await get(`SELECT * FROM reminders WHERE id = ?`, [
+      request.params.id,
+    ]);
+
+    if (!current) {
+      response.status(404).json({ error: 'Lembrete não encontrado.' });
+      return;
+    }
+
+    const body = normalizeReminderBody(request.body, current);
+
+    await run(
+      `
+      UPDATE reminders
+      SET title = ?, message = ?, type = ?, time = ?, days_of_week = ?, enabled = ?, route = ?, updated_at = ?
+      WHERE id = ?
+      `,
+      [
+        body.title,
+        body.message,
+        body.type,
+        body.time,
+        body.days_of_week,
+        body.enabled,
+        body.route,
+        nowISO(),
+        request.params.id,
+      ]
+    );
+
+    const updated = await get(`SELECT * FROM reminders WHERE id = ?`, [
+      request.params.id,
+    ]);
+
+    response.json({
+      ok: true,
+      reminder: normalizeReminder(updated),
+    });
+  } catch (error) {
+    console.error('[PUSH] Erro ao editar reminder:', error);
+    response.status(400).json({ error: error.message || 'Erro ao editar lembrete.' });
+  }
+});
+
+app.delete('/api/reminders/:id', async (request, response) => {
+  try {
+    const result = await run(`DELETE FROM reminders WHERE id = ?`, [
+      request.params.id,
+    ]);
+
+    response.json({
+      ok: true,
+      deleted: result.changes > 0,
+    });
+  } catch (error) {
+    console.error('[PUSH] Erro ao excluir reminder:', error);
+    response.status(500).json({ error: 'Erro ao excluir lembrete.' });
+  }
+});
 function isValidISODate(value) {
   return /^\d{4}-\d{2}-\d{2}$/.test(String(value || ''));
 }
@@ -1667,6 +2131,8 @@ app.get('*', (request, response) => {
 
 initDatabase()
   .then(() => {
+    startReminderScheduler();
+
     app.listen(PORT, HOST, () => {
       const urls = getLocalNetworkUrls(PORT);
 

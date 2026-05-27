@@ -114,3 +114,97 @@ pm2 start src/server.js --name quiet-progress
 pm2 save
 pm2 startup systemd
 ```
+
+
+
+## Sprint 2/3 — PWA + Web Push
+
+O Quiet Progress agora pode ser instalado como PWA e possui suporte a notificações Web Push.
+
+### Instalação de dependências
+
+```bash
+npm install --omit=dev
+```
+
+### Gerar VAPID keys
+
+```bash
+npm run generate:vapid
+```
+
+Copie o resultado para o `.env`:
+
+```env
+VAPID_PUBLIC_KEY=
+VAPID_PRIVATE_KEY=
+VAPID_SUBJECT=mailto:seu-email@example.com
+```
+
+### HTTPS é obrigatório para push no Android
+
+Web Push em Android exige contexto seguro:
+
+```text
+https://seu-dominio.com
+```
+
+ou `localhost` em desenvolvimento. Acesso por `http://192.168.x.x:3000` na LAN não é contexto seguro para notificações push.
+
+Para usar com Cloudflare Tunnel, ajuste:
+
+```env
+PUBLIC_BASE_URL=https://seu-dominio.com
+NODE_ENV=production
+```
+
+Em produção, lembre-se de usar HTTPS real para que o cookie `secure` funcione corretamente.
+
+### O que o Service Worker cacheia
+
+O Service Worker cacheia apenas app shell seguro:
+
+```text
+/styles.css
+/app.js
+/login.js
+/manifest.json
+/icons/*
+```
+
+Ele **não cacheia**:
+
+```text
+/api/*
+/login
+navegações HTML protegidas
+```
+
+Isso evita vazamento de dados sensíveis e evita quebrar sessão/cookie.
+
+### Endpoints adicionados
+
+```text
+GET    /api/push/vapid-public-key
+POST   /api/push/subscribe
+POST   /api/push/unsubscribe
+POST   /api/push/test
+GET    /api/reminders
+POST   /api/reminders
+PATCH  /api/reminders/:id
+DELETE /api/reminders/:id
+```
+
+Todos ficam protegidos por login, exceto os arquivos públicos necessários para PWA, como `manifest.json`, `service-worker.js` e `icons`.
+
+### Teste rápido
+
+1. Rode com VAPID keys configuradas.
+2. Sirva por HTTPS.
+3. Abra Backup → Notificações.
+4. Clique em “Ativar notificações”.
+5. Aceite a permissão do navegador.
+6. Clique em “Enviar teste”.
+7. Crie/edite lembretes.
+8. Feche o PWA e aguarde o horário configurado.
+

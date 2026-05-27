@@ -1,11 +1,12 @@
 {
-  "name": "quiet-progress-v3-temporal-mobile-lowend",
-  "version": "3.0.0",
+  "name": "quiet-progress-v3-pwa-push",
+  "version": "3.2.0",
   "description": "Quiet Progress temporal dashboard, local-first, mobile-first, low-end friendly.",
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",
-    "dev": "node --watch src/server.js"
+    "dev": "node --watch src/server.js",
+    "generate:vapid": "node scripts/generate-vapid.js"
   },
   "dependencies": {
     "dotenv": "^16.4.7",
@@ -14,7 +15,8 @@
     "express-session": "^1.18.1",
     "helmet": "^8.0.0",
     "multer": "^1.4.5-lts.1",
-    "sqlite3": "^5.1.7"
+    "sqlite3": "^5.1.7",
+    "web-push": "^3.6.7"
   },
   "devDependencies": {}
 }

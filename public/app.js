@@ -1786,3 +1786,384 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 document.addEventListener('DOMContentLoaded', init);
+
+
+
+/* ============================================================
+   PWA / WEB PUSH / REMINDERS
+   Quiet Progress Sprint 2/3
+   ============================================================ */
+
+let qpServiceWorkerRegistration = null;
+let qpPushSubscription = null;
+
+function urlBase64ToUint8Array(base64String) {
+  const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = `${base64String}${padding}`.replace(/-/g, '+').replace(/_/g, '/');
+  const rawData = window.atob(base64);
+  const outputArray = new Uint8Array(rawData.length);
+
+  for (let index = 0; index < rawData.length; index += 1) {
+    outputArray[index] = rawData.charCodeAt(index);
+  }
+
+  return outputArray;
+}
+
+function qpPushElements() {
+  return {
+    pwaInstallStatus: document.getElementById('pwaInstallStatus'),
+    permissionStatus: document.getElementById('notificationPermissionStatus'),
+    secureContextStatus: document.getElementById('secureContextStatus'),
+    pushWarning: document.getElementById('pushWarning'),
+    enableBtn: document.getElementById('enableNotificationsBtn'),
+    testBtn: document.getElementById('testNotificationBtn'),
+    reminderForm: document.getElementById('reminderForm'),
+    reminderId: document.getElementById('reminderIdInput'),
+    title: document.getElementById('reminderTitleInput'),
+    message: document.getElementById('reminderMessageInput'),
+    type: document.getElementById('reminderTypeInput'),
+    time: document.getElementById('reminderTimeInput'),
+    route: document.getElementById('reminderRouteInput'),
+    enabled: document.getElementById('reminderEnabledInput'),
+    weekdays: document.getElementById('reminderWeekdays'),
+    resetBtn: document.getElementById('resetReminderFormBtn'),
+    list: document.getElementById('remindersList'),
+  };
+}
+
+function setPushWarning(message) {
+  const { pushWarning } = qpPushElements();
+  if (!pushWarning) return;
+
+  pushWarning.hidden = !message;
+  pushWarning.textContent = message || '';
+}
+
+function updatePwaStatus() {
+  const els = qpPushElements();
+
+  if (els.pwaInstallStatus) {
+    const standalone =
+      window.matchMedia('(display-mode: standalone)').matches ||
+      window.navigator.standalone === true;
+
+    els.pwaInstallStatus.textContent = standalone ? 'Instalado / standalone' : 'Navegador';
+  }
+
+  if (els.permissionStatus) {
+    els.permissionStatus.textContent =
+      'Notification' in window ? Notification.permission : 'Indisponível';
+  }
+
+  if (els.secureContextStatus) {
+    els.secureContextStatus.textContent = window.isSecureContext
+      ? 'Seguro'
+      : 'Requer HTTPS';
+  }
+
+  if (!window.isSecureContext) {
+    setPushWarning(
+      'Web Push em Android exige HTTPS ou localhost. Pela LAN em HTTP, o PWA pode abrir, mas notificações push não funcionam até usar HTTPS/Cloudflare Tunnel.'
+    );
+  } else {
+    setPushWarning('');
+  }
+}
+
+async function registerQuietProgressServiceWorker() {
+  if (!('serviceWorker' in navigator)) {
+    setPushWarning('Este navegador não suporta Service Worker.');
+    return null;
+  }
+
+  try {
+    qpServiceWorkerRegistration = await navigator.serviceWorker.register('/service-worker.js', {
+      scope: '/',
+    });
+
+    await navigator.serviceWorker.ready;
+    updatePwaStatus();
+
+    return qpServiceWorkerRegistration;
+  } catch (error) {
+    console.warn('[PWA] Falha ao registrar service worker:', error);
+    setPushWarning('Falha ao registrar Service Worker. Confira HTTPS e console.');
+    return null;
+  }
+}
+
+async function enablePushNotifications() {
+  const els = qpPushElements();
+
+  if (!('Notification' in window) || !('PushManager' in window)) {
+    setPushWarning('Este navegador não suporta Web Push.');
+    return;
+  }
+
+  if (!window.isSecureContext) {
+    updatePwaStatus();
+    return;
+  }
+
+  const registration =
+    qpServiceWorkerRegistration || (await registerQuietProgressServiceWorker());
+
+  if (!registration) return;
+
+  const keyPayload = await api('/push/vapid-public-key');
+
+  if (!keyPayload.configured || !keyPayload.publicKey) {
+    setPushWarning('VAPID keys não configuradas no servidor. Rode npm run generate:vapid e atualize o .env.');
+    return;
+  }
+
+  const permission = await Notification.requestPermission();
+  updatePwaStatus();
+
+  if (permission !== 'granted') {
+    setPushWarning('Permissão de notificação não concedida.');
+    return;
+  }
+
+  qpPushSubscription = await registration.pushManager.subscribe({
+    userVisibleOnly: true,
+    applicationServerKey: urlBase64ToUint8Array(keyPayload.publicKey),
+  });
+
+  await api('/push/subscribe', {
+    method: 'POST',
+    body: JSON.stringify(qpPushSubscription),
+  });
+
+  if (els.enableBtn) els.enableBtn.textContent = 'Notificações ativas';
+  setPushWarning('');
+  showToast('Notificações ativadas.');
+  updatePwaStatus();
+}
+
+async function sendTestPushNotification() {
+  const result = await api('/push/test', {
+    method: 'POST',
+    body: JSON.stringify({}),
+  });
+
+  if (result.skipped) {
+    setPushWarning(result.reason || 'Push não configurado no servidor.');
+    return;
+  }
+
+  showToast(`Teste enviado: ${result.sent} ok / ${result.failed} falhas.`);
+}
+
+function getReminderWeekdaysFromForm() {
+  const { weekdays } = qpPushElements();
+
+  if (!weekdays) return [0, 1, 2, 3, 4, 5, 6];
+
+  return Array.from(weekdays.querySelectorAll('input[type="checkbox"]:checked')).map((input) =>
+    Number(input.value)
+  );
+}
+
+function setReminderWeekdays(days) {
+  const { weekdays } = qpPushElements();
+  const selected = new Set((days || []).map(Number));
+
+  if (!weekdays) return;
+
+  weekdays.querySelectorAll('input[type="checkbox"]').forEach((input) => {
+    input.checked = selected.has(Number(input.value));
+  });
+}
+
+function resetReminderForm() {
+  const els = qpPushElements();
+
+  if (!els.reminderForm) return;
+
+  els.reminderId.value = '';
+  els.title.value = 'Check-in diário';
+  els.message.value = 'Hora de registrar energia, foco, motivação, humor e nota do dia.';
+  els.type.value = 'daily_checkin';
+  els.time.value = '21:30';
+  els.route.value = '/?view=tracker';
+  els.enabled.checked = true;
+  setReminderWeekdays([0, 1, 2, 3, 4, 5, 6]);
+}
+
+async function loadReminders() {
+  const els = qpPushElements();
+  if (!els.list) return;
+
+  const payload = await api('/reminders');
+
+  els.list.innerHTML = payload.items.length
+    ? payload.items.map(renderReminderItem).join('')
+    : '<div class="empty-state">Nenhum lembrete configurado.</div>';
+}
+
+function renderReminderItem(reminder) {
+  const dayLabels = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
+  const days = reminder.days_of_week.map((day) => dayLabels[day]).join(', ');
+
+  return `
+    <article class="reminder-item" data-reminder-id="${reminder.id}">
+      <div>
+        <strong>${escapeHTML(reminder.title)}</strong>
+        <p>${escapeHTML(reminder.message)}</p>
+        <span>${escapeHTML(reminder.time)} · ${escapeHTML(days)} · ${escapeHTML(reminder.type)}</span>
+      </div>
+      <div class="reminder-actions">
+        <button class="row-link edit-reminder" type="button" data-reminder-id="${reminder.id}">Editar</button>
+        <button class="row-link danger delete-reminder" type="button" data-reminder-id="${reminder.id}">Excluir</button>
+      </div>
+    </article>
+  `;
+}
+
+async function saveReminderFromForm(event) {
+  event.preventDefault();
+
+  const els = qpPushElements();
+  const id = els.reminderId.value;
+
+  const payload = {
+    title: els.title.value,
+    message: els.message.value,
+    type: els.type.value,
+    time: els.time.value,
+    route: els.route.value || '/',
+    enabled: els.enabled.checked,
+    days_of_week: getReminderWeekdaysFromForm(),
+  };
+
+  if (!payload.title.trim() || !payload.message.trim()) {
+    showToast('Título e mensagem são obrigatórios.');
+    return;
+  }
+
+  if (id) {
+    await api(`/reminders/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    });
+    showToast('Lembrete atualizado.');
+  } else {
+    await api('/reminders', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+    showToast('Lembrete criado.');
+  }
+
+  resetReminderForm();
+  await loadReminders();
+}
+
+async function fillReminderForm(id) {
+  const payload = await api('/reminders');
+  const reminder = payload.items.find((item) => Number(item.id) === Number(id));
+  const els = qpPushElements();
+
+  if (!reminder || !els.reminderForm) return;
+
+  els.reminderId.value = reminder.id;
+  els.title.value = reminder.title;
+  els.message.value = reminder.message;
+  els.type.value = reminder.type;
+  els.time.value = reminder.time;
+  els.route.value = reminder.route || '/';
+  els.enabled.checked = Boolean(reminder.enabled);
+  setReminderWeekdays(reminder.days_of_week);
+  els.title.focus();
+}
+
+async function deleteReminder(id) {
+  await api(`/reminders/${id}`, {
+    method: 'DELETE',
+  });
+
+  showToast('Lembrete removido.');
+  await loadReminders();
+}
+
+function bindPwaPushUi() {
+  const els = qpPushElements();
+
+  if (!els.enableBtn || els.enableBtn.dataset.bound === 'true') return;
+
+  els.enableBtn.dataset.bound = 'true';
+  els.enableBtn.addEventListener('click', () => {
+    enablePushNotifications().catch((error) => {
+      console.error('[PUSH] Erro ao ativar notificações:', error);
+      setPushWarning(error.message || 'Erro ao ativar notificações.');
+    });
+  });
+
+  els.testBtn?.addEventListener('click', () => {
+    sendTestPushNotification().catch((error) => {
+      console.error('[PUSH] Erro ao enviar teste:', error);
+      setPushWarning(error.message || 'Erro ao enviar teste.');
+    });
+  });
+
+  els.reminderForm?.addEventListener('submit', (event) => {
+    saveReminderFromForm(event).catch((error) => {
+      console.error('[PUSH] Erro ao salvar lembrete:', error);
+      showToast(error.message || 'Erro ao salvar lembrete.');
+    });
+  });
+
+  els.resetBtn?.addEventListener('click', resetReminderForm);
+
+  els.list?.addEventListener('click', (event) => {
+    const editButton = event.target.closest('.edit-reminder');
+    const deleteButton = event.target.closest('.delete-reminder');
+
+    if (editButton) {
+      fillReminderForm(editButton.dataset.reminderId).catch((error) => {
+        showToast(error.message || 'Erro ao editar lembrete.');
+      });
+      return;
+    }
+
+    if (deleteButton) {
+      deleteReminder(deleteButton.dataset.reminderId).catch((error) => {
+        showToast(error.message || 'Erro ao excluir lembrete.');
+      });
+    }
+  });
+}
+
+async function initPwaPush() {
+  bindPwaPushUi();
+  updatePwaStatus();
+  resetReminderForm();
+
+  await registerQuietProgressServiceWorker();
+
+  try {
+    if (qpServiceWorkerRegistration?.pushManager) {
+      qpPushSubscription = await qpServiceWorkerRegistration.pushManager.getSubscription();
+
+      if (qpPushSubscription && qpPushElements().enableBtn) {
+        qpPushElements().enableBtn.textContent = 'Notificações ativas';
+      }
+    }
+  } catch (error) {
+    console.warn('[PWA] Não foi possível ler subscription atual:', error);
+  }
+
+  try {
+    await loadReminders();
+  } catch (error) {
+    console.warn('[PUSH] Não foi possível carregar lembretes:', error);
+  }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  initPwaPush().catch((error) => {
+    console.warn('[PWA] Inicialização falhou:', error);
+  });
+});

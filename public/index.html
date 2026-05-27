@@ -9,6 +9,7 @@
     <title>Quiet Progress // Temporal OS</title>
 
     <link rel="manifest" href="./manifest.json" />
+    <link rel="apple-touch-icon" href="/icons/icon-192.png" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -373,6 +374,88 @@
                 <div class="panel-kicker">System</div>
                 <h2 class="panel-title">Backup & Restore</h2>
               </div>
+            </div>
+
+            <div class="notification-panel">
+              <div class="panel-header compact-header">
+                <div>
+                  <div class="panel-kicker">PWA / Web Push</div>
+                  <h2 class="panel-title">Notificações</h2>
+                </div>
+              </div>
+
+              <div class="notification-status-grid">
+                <div class="notify-status-card">
+                  <span>PWA</span>
+                  <strong id="pwaInstallStatus">Verificando...</strong>
+                </div>
+                <div class="notify-status-card">
+                  <span>Permissão</span>
+                  <strong id="notificationPermissionStatus">Verificando...</strong>
+                </div>
+                <div class="notify-status-card">
+                  <span>Contexto</span>
+                  <strong id="secureContextStatus">Verificando...</strong>
+                </div>
+              </div>
+
+              <div class="push-warning" id="pushWarning" hidden></div>
+
+              <div class="system-tools-actions">
+                <button class="system-tool-btn" id="enableNotificationsBtn" type="button">Ativar notificações</button>
+                <button class="system-tool-btn" id="testNotificationBtn" type="button">Enviar teste</button>
+              </div>
+
+              <form class="reminder-form" id="reminderForm">
+                <input id="reminderIdInput" type="hidden" />
+                <label>
+                  Título
+                  <input id="reminderTitleInput" type="text" placeholder="Ex: Check-in diário" required />
+                </label>
+                <label>
+                  Mensagem
+                  <input id="reminderMessageInput" type="text" placeholder="Mensagem da notificação" required />
+                </label>
+                <label>
+                  Tipo
+                  <select id="reminderTypeInput">
+                    <option value="daily_checkin">Check-in diário</option>
+                    <option value="pending_habits">Hábitos pendentes</option>
+                    <option value="daily_tasks">Tarefas do dia</option>
+                    <option value="custom">Custom</option>
+                  </select>
+                </label>
+                <label>
+                  Horário
+                  <input id="reminderTimeInput" type="time" value="21:30" required />
+                </label>
+                <label>
+                  Rota
+                  <input id="reminderRouteInput" type="text" value="/?view=tracker" />
+                </label>
+
+                <div class="weekday-picker" id="reminderWeekdays">
+                  <label><input type="checkbox" value="0" checked />Dom</label>
+                  <label><input type="checkbox" value="1" checked />Seg</label>
+                  <label><input type="checkbox" value="2" checked />Ter</label>
+                  <label><input type="checkbox" value="3" checked />Qua</label>
+                  <label><input type="checkbox" value="4" checked />Qui</label>
+                  <label><input type="checkbox" value="5" checked />Sex</label>
+                  <label><input type="checkbox" value="6" checked />Sáb</label>
+                </div>
+
+                <label class="reminder-enabled">
+                  <input id="reminderEnabledInput" type="checkbox" checked />
+                  Lembrete ativo
+                </label>
+
+                <div class="system-tools-actions">
+                  <button class="system-tool-btn" type="submit">Salvar lembrete</button>
+                  <button class="system-tool-btn" id="resetReminderFormBtn" type="button">Limpar</button>
+                </div>
+              </form>
+
+              <div class="reminders-list" id="remindersList"></div>
             </div>
 
             <div class="backup-note">

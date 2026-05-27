@@ -181,6 +181,35 @@ async function initDatabase() {
     )
   `);
 
+  await run(`
+    CREATE TABLE IF NOT EXISTS push_subscriptions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      endpoint TEXT NOT NULL UNIQUE,
+      p256dh TEXT NOT NULL,
+      auth TEXT NOT NULL,
+      user_agent TEXT DEFAULT '',
+      created_at TEXT NOT NULL,
+      updated_at TEXT,
+      active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1))
+    )
+  `);
+
+  await run(`
+    CREATE TABLE IF NOT EXISTS reminders (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      title TEXT NOT NULL,
+      message TEXT NOT NULL,
+      type TEXT NOT NULL DEFAULT 'daily_checkin',
+      time TEXT NOT NULL,
+      days_of_week TEXT NOT NULL DEFAULT '[0,1,2,3,4,5,6]',
+      enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
+      route TEXT NOT NULL DEFAULT '/',
+      created_at TEXT NOT NULL,
+      updated_at TEXT,
+      last_sent_at TEXT
+    )
+  `);
+
   /*
     Migrações defensivas para versões antigas.
     Não apaga histórico. Apenas cria colunas novas quando possível.
@@ -316,6 +345,29 @@ async function initDatabase() {
   await createIndex(`CREATE INDEX IF NOT EXISTS idx_tarefas_data ON tarefas(data_ref)`);
   await createIndex(`CREATE INDEX IF NOT EXISTS idx_tarefas_data_ativo ON tarefas(data_ref, ativo)`);
   await createIndex(`CREATE INDEX IF NOT EXISTS idx_mindset_data ON mindset(data_ref)`);
+  await createIndex(`CREATE UNIQUE INDEX IF NOT EXISTS idx_push_subscriptions_endpoint ON push_subscriptions(endpoint)`);
+  await createIndex(`CREATE INDEX IF NOT EXISTS idx_push_subscriptions_active ON push_subscriptions(active)`);
+  await createIndex(`CREATE INDEX IF NOT EXISTS idx_reminders_enabled_time ON reminders(enabled, time)`);
+
+  const reminderCount = await get(`SELECT COUNT(*) AS total FROM reminders`);
+  if (Number(reminderCount?.total || 0) === 0) {
+    await run(
+      `
+      INSERT INTO reminders (title, message, type, time, days_of_week, enabled, route, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?)
+      `,
+      [
+        'Check-in diário',
+        'Hora de registrar energia, foco, motivação, humor e nota do dia.',
+        'daily_checkin',
+        '21:30',
+        '[0,1,2,3,4,5,6]',
+        '/?view=tracker',
+        now,
+        now
+      ]
+    );
+  }
 
   const count = await get(`SELECT COUNT(*) AS total FROM habitos`);
   if (Number(count?.total || 0) === 0) {
