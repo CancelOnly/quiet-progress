@@ -1,0 +1,33 @@
+[Unit]
+Description=Quiet Progress Node.js app
+Documentation=https://github.com/SEU_USUARIO/quiet-progress
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=quietprogress
+Group=quietprogress
+WorkingDirectory=/opt/quiet-progress
+EnvironmentFile=/opt/quiet-progress/.env
+ExecStart=/usr/bin/node src/server.js
+
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=20
+KillSignal=SIGINT
+
+# Hardening leve sem quebrar SQLite/local files.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/opt/quiet-progress /var/lib/quiet-progress /var/backups/quiet-progress /var/log/quiet-progress
+
+# Logs no journald.
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=quiet-progress
+
+[Install]
+WantedBy=multi-user.target

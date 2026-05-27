@@ -1,0 +1,22 @@
+[Unit]
+Description=Cloudflare Tunnel for Quiet Progress
+Documentation=https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/
+After=network-online.target quiet-progress.service
+Wants=network-online.target
+Requires=quiet-progress.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/cloudflared --config /etc/cloudflared/config.yml tunnel run
+Restart=on-failure
+RestartSec=5
+
+NoNewPrivileges=true
+PrivateTmp=true
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=cloudflared-quiet-progress
+
+[Install]
+WantedBy=multi-user.target
