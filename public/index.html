@@ -139,6 +139,21 @@
                 <div class="progress-fill" id="overviewProgressFill"></div>
               </div>
 
+              <div class="overview-score-grid">
+                <div class="score-card build">
+                  <span>Build Score</span>
+                  <strong id="overviewBuildScore">0%</strong>
+                </div>
+                <div class="score-card reduction">
+                  <span>Reduction Score</span>
+                  <strong id="overviewReductionScore">0%</strong>
+                </div>
+                <div class="score-card overall">
+                  <span>Overall Score</span>
+                  <strong id="overviewOverallScore">0%</strong>
+                </div>
+              </div>
+
               <div class="overview-actions">
                 <button class="status-btn" id="overviewOpenTrackerBtn" type="button">Editar no Tracker</button>
                 <button class="status-btn" id="overviewCopyMarkdownBtn" type="button">Copiar Markdown</button>
@@ -175,6 +190,7 @@
                   <button id="lockinStartBtn" type="button">Start</button>
                   <button id="lockinPauseBtn" type="button">Pause</button>
                   <button id="lockinResetBtn" type="button">Reset</button>
+                  <button id="lockinSoundBtn" type="button">Sound On</button>
                 </div>
               </div>
             </article>
@@ -202,6 +218,35 @@
               <div class="overview-mindset-mini" id="overviewMindsetMini"></div>
               <p class="note-preview" id="overviewNotePreview">Sem nota.</p>
             </article>
+
+            <article class="panel overview-reduction-summary">
+              <div class="panel-header compact-header">
+                <div>
+                  <div class="panel-kicker">Reduction</div>
+                  <h2 class="panel-title">Reduction Summary</h2>
+                </div>
+              </div>
+              <div class="reduction-summary" id="overviewReductionSummary"></div>
+            </article>
+
+            <article class="panel overview-streaks">
+              <div class="panel-header compact-header">
+                <div>
+                  <div class="panel-kicker">Consistency</div>
+                  <h2 class="panel-title">Streaks</h2>
+                </div>
+              </div>
+              <div class="streaks-grid">
+                <section>
+                  <h3>Active Streaks</h3>
+                  <div id="overviewActiveStreaks" class="streak-list"></div>
+                </section>
+                <section>
+                  <h3>Best Streaks</h3>
+                  <div id="overviewBestStreaks" class="streak-list"></div>
+                </section>
+              </div>
+            </article>
           </section>
 
           <section class="stats-grid overview-charts">
@@ -209,7 +254,7 @@
               <div class="panel-header compact-header">
                 <div>
                   <div class="panel-kicker">Month</div>
-                  <h2 class="panel-title">Progresso geral</h2>
+                  <h2 class="panel-title">Build / Reduction / Overall</h2>
                 </div>
               </div>
               <div class="chart-wrap"><canvas id="monthDonutChart"></canvas></div>
@@ -239,10 +284,21 @@
               <div class="panel-header compact-header">
                 <div>
                   <div class="panel-kicker">Habits</div>
-                  <h2 class="panel-title">Conclusão por hábito</h2>
+                  <h2 class="panel-title">Habit Performance</h2>
                 </div>
               </div>
               <div class="chart-wrap"><canvas id="habitBarChart"></canvas></div>
+            </article>
+
+
+            <article class="panel chart-card">
+              <div class="panel-header compact-header">
+                <div>
+                  <div class="panel-kicker">Reduction</div>
+                  <h2 class="panel-title">Occurrences by day</h2>
+                </div>
+              </div>
+              <div class="chart-wrap"><canvas id="reductionOccurrencesChart"></canvas></div>
             </article>
 
             <article class="panel chart-card">

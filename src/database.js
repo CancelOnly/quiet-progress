@@ -2,12 +2,16 @@ const sqlite3 = require('sqlite3').verbose();
 const path = require('path');
 const fs = require('fs');
 
-const DB_PATH = path.join(__dirname, '..', 'quiet_progress.db');
+const DB_PATH = path.resolve(
+  process.env.DB_PATH || path.join(process.cwd(), 'quiet_progress.db')
+);
 
 let db = null;
 
 function connectDatabase() {
   if (db) return db;
+
+  fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
 
   db = new sqlite3.Database(DB_PATH, (error) => {
     if (error) {
@@ -15,7 +19,7 @@ function connectDatabase() {
       process.exit(1);
     }
 
-    console.log(`[SQLite] Banco conectado: ${DB_PATH}`);
+    console.log(`[SQLite] Banco conectado em: ${DB_PATH}`);
   });
 
   return db;
@@ -119,6 +123,8 @@ async function createIndex(sql) {
 async function initDatabase() {
   connectDatabase();
 
+  let legacyHabitTypeMigration = false;
+
   await run(`PRAGMA foreign_keys = ON`);
   await run(`PRAGMA journal_mode = WAL`).catch(() => {});
   await run(`PRAGMA synchronous = NORMAL`).catch(() => {});
@@ -133,6 +139,7 @@ async function initDatabase() {
       ordem INTEGER DEFAULT 0,
       data_inicio TEXT DEFAULT NULL,
       data_fim TEXT DEFAULT NULL,
+      habit_type TEXT NOT NULL DEFAULT 'build' CHECK (habit_type IN ('build', 'reduction')),
       created_at TEXT NOT NULL,
       updated_at TEXT
     )
@@ -220,6 +227,12 @@ async function initDatabase() {
   await addColumnIfMissing('habitos', 'ordem', 'INTEGER DEFAULT 0');
   await addColumnIfMissing('habitos', 'data_inicio', 'TEXT DEFAULT NULL');
   await addColumnIfMissing('habitos', 'data_fim', 'TEXT DEFAULT NULL');
+
+  if (!(await hasColumn('habitos', 'habit_type'))) {
+    legacyHabitTypeMigration = true;
+    await addColumnIfMissing('habitos', 'habit_type', "TEXT NOT NULL DEFAULT 'build'");
+  }
+
   await addColumnIfMissing('habitos', 'created_at', 'TEXT');
   await addColumnIfMissing('habitos', 'updated_at', 'TEXT');
 
@@ -249,6 +262,17 @@ async function initDatabase() {
 
   const now = nowISO();
   const today = todayISO();
+
+  await run(`
+    UPDATE habitos
+    SET habit_type = CASE
+      WHEN LOWER(COALESCE(habit_type, 'build')) = 'reduction' THEN 'reduction'
+      ELSE 'build'
+    END
+    WHERE habit_type IS NULL
+       OR LOWER(habit_type) NOT IN ('build', 'reduction')
+       OR habit_type != LOWER(habit_type)
+  `).catch(() => {});
 
   await run(`UPDATE habitos SET created_at = COALESCE(created_at, ?), updated_at = COALESCE(updated_at, ?)`, [now, now]);
 
@@ -382,8 +406,8 @@ async function initDatabase() {
       const [titulo, subtitulo, cor] = defaults[i];
       await run(
         `
-        INSERT INTO habitos (titulo, subtitulo, cor, ordem, ativo, created_at, updated_at)
-        VALUES (?, ?, ?, ?, 1, ?, ?)
+        INSERT INTO habitos (titulo, subtitulo, cor, ordem, ativo, habit_type, created_at, updated_at)
+        VALUES (?, ?, ?, ?, 1, 'build', ?, ?)
         `,
         [titulo, subtitulo, cor, i, now, now]
       );
@@ -391,6 +415,8 @@ async function initDatabase() {
   }
 
   console.log('[SQLite] Estrutura v3 temporal inicializada.');
+
+  return { legacyHabitTypeMigration };
 }
 
 function databaseExists() {

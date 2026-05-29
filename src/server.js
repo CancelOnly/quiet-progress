@@ -4,6 +4,7 @@ const express = require('express');
 const path = require('path');
 const os = require('os');
 const fs = require('fs');
+const sqlite3 = require('sqlite3').verbose();
 const multer = require('multer');
 const session = require('express-session');
 const helmet = require('helmet');
@@ -22,6 +23,8 @@ const {
 } = require('./database');
 
 const app = express();
+
+let lastMigrationInfo = { legacyHabitTypeMigration: false };
 
 app.disable('x-powered-by');
 app.set('trust proxy', 1);
@@ -75,8 +78,10 @@ if (
 
 const PUBLIC_DIR = path.join(__dirname, '..', 'public');
 const UPLOAD_DIR = path.join(__dirname, '..', 'uploads');
+const BACKUP_DIR = path.join(__dirname, '..', 'backups');
 
 fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+fs.mkdirSync(BACKUP_DIR, { recursive: true });
 
 const upload = multer({
   dest: UPLOAD_DIR,
@@ -1157,6 +1162,127 @@ function calcPercent(done, total) {
   return total === 0 ? 0 : Math.round((done / total) * 100);
 }
 
+function normalizeHabitType(value) {
+  return String(value || 'build').toLowerCase() === 'reduction'
+    ? 'reduction'
+    : 'build';
+}
+
+function suggestHabitType(habit) {
+  const text = `${habit.titulo || ''} ${habit.subtitulo || ''}`.toLowerCase();
+  const reductionTerms = [
+    'álcool',
+    'alcool',
+    'lust',
+    'pornografia',
+    'cigarro',
+    'açúcar',
+    'acucar',
+    'redes sociais',
+  ];
+
+  return reductionTerms.some((term) => text.includes(term))
+    ? 'reduction'
+    : 'build';
+}
+
+function isReductionHabit(habit) {
+  return normalizeHabitType(habit.habit_type) === 'reduction';
+}
+
+function habitSuccessFromChecked(habit, checked) {
+  return isReductionHabit(habit) ? !checked : checked;
+}
+
+function habitMetricLabel(habit) {
+  return isReductionHabit(habit) ? 'clean days' : 'completion';
+}
+
+function habitMonthText(habit, item) {
+  if (isReductionHabit(habit)) {
+    return `${item.cleanDays}/${item.possibleDays} clean days · ${item.occurrences} occurrences`;
+  }
+
+  return `${item.completedDays}/${item.possibleDays} completed`;
+}
+
+function enumerateDates(start, end) {
+  const dates = [];
+
+  if (!start || !end || start > end) return dates;
+
+  for (let date = start; date <= end; date = addDaysISO(date, 1)) {
+    dates.push(date);
+  }
+
+  return dates;
+}
+
+function getHabitValidDates(habit, start, end, options = {}) {
+  let currentStart = start;
+  let currentEnd = end;
+
+  if (habit.data_inicio && habit.data_inicio > currentStart) {
+    currentStart = habit.data_inicio;
+  }
+
+  if (habit.data_fim && habit.data_fim < currentEnd) {
+    currentEnd = habit.data_fim;
+  }
+
+  if (options.limitToToday !== false) {
+    const today = todayISO();
+    if (today < currentEnd) currentEnd = today;
+  }
+
+  return enumerateDates(currentStart, currentEnd);
+}
+
+function calcHabitStreaks(habit, dates, logMap, anchorDate) {
+  const isReduction = isReductionHabit(habit);
+  const validDates = dates.filter((date) => dateIsWithinHabit(habit, date));
+  const validDateSet = new Set(validDates);
+  const anchor =
+    anchorDate && validDateSet.has(anchorDate)
+      ? anchorDate
+      : validDates.length
+        ? validDates[validDates.length - 1]
+        : null;
+
+  let current = 0;
+
+  if (anchor) {
+    for (let date = anchor; validDateSet.has(date); date = addDaysISO(date, -1)) {
+      const checked = logMap[`${habit.id}:${date}`] === true;
+      const success = isReduction ? !checked : checked;
+
+      if (!success) break;
+      current += 1;
+    }
+  }
+
+  let best = 0;
+  let running = 0;
+
+  validDates.forEach((date) => {
+    const checked = logMap[`${habit.id}:${date}`] === true;
+    const success = isReduction ? !checked : checked;
+
+    if (success) {
+      running += 1;
+      best = Math.max(best, running);
+    } else {
+      running = 0;
+    }
+  });
+
+  return {
+    current,
+    best,
+  };
+}
+
+
 async function getDayPayload(date, options = {}) {
   const includeInactiveWithLogs = Boolean(options.includeInactiveWithLogs);
   const allHabits = includeInactiveWithLogs
@@ -1180,18 +1306,28 @@ async function getDayPayload(date, options = {}) {
     .filter(
       (habit) => includeInactiveWithLogs || dateIsWithinHabit(habit, date)
     )
-    .map((habit) => ({
-      id: habit.id,
-      titulo: habit.titulo,
-      subtitulo: habit.subtitulo || '',
-      ativo: Number(habit.ativo) === 1,
-      cor: habit.cor,
-      ordem: Number(habit.ordem || 0),
-      data_inicio: habit.data_inicio,
-      data_fim: habit.data_fim,
-      disabledForDate: !dateIsWithinHabit(habit, date),
-      concluido: logMap.get(Number(habit.id)) === true,
-    }));
+    .map((habit) => {
+      const checked = logMap.get(Number(habit.id)) === true;
+      const habitType = normalizeHabitType(habit.habit_type);
+      const success = habitType === 'reduction' ? !checked : checked;
+
+      return {
+        id: habit.id,
+        titulo: habit.titulo,
+        subtitulo: habit.subtitulo || '',
+        ativo: Number(habit.ativo) === 1,
+        cor: habit.cor,
+        ordem: Number(habit.ordem || 0),
+        data_inicio: habit.data_inicio,
+        data_fim: habit.data_fim,
+        habit_type: habitType,
+        disabledForDate: !dateIsWithinHabit(habit, date),
+        concluido: checked,
+        occurrence: habitType === 'reduction' ? checked : false,
+        cleanDay: habitType === 'reduction' ? !checked : null,
+        success,
+      };
+    });
 
   const tasks = (
     await all(
@@ -1208,10 +1344,30 @@ async function getDayPayload(date, options = {}) {
 
   const mindset = await getMindsetForDate(date);
 
-  const habitsDone = habits.filter((habit) => habit.concluido).length;
+  const habitsDone = habits.filter((habit) => habit.success).length;
+  const buildHabits = habits.filter((habit) => habit.habit_type === 'build');
+  const reductionHabits = habits.filter(
+    (habit) => habit.habit_type === 'reduction'
+  );
+
+  const buildDone = buildHabits.filter((habit) => habit.success).length;
+  const reductionClean = reductionHabits.filter((habit) => habit.success).length;
+  const reductionOccurrences = reductionHabits.filter(
+    (habit) => habit.occurrence
+  ).length;
+
   const tasksDone = tasks.filter((task) => task.status === 'CONCLUIDO').length;
 
   const habitsPercent = calcPercent(habitsDone, habits.length);
+  const buildScore = calcPercent(buildDone, buildHabits.length);
+  const reductionScore = calcPercent(reductionClean, reductionHabits.length);
+  const scoreParts = [];
+  if (buildHabits.length) scoreParts.push(buildScore);
+  if (reductionHabits.length) scoreParts.push(reductionScore);
+  const overallScore = scoreParts.length
+    ? Math.round(scoreParts.reduce((sum, item) => sum + item, 0) / scoreParts.length)
+    : 0;
+
   const tasksPercent = calcPercent(tasksDone, tasks.length);
   const totalItems = habits.length + tasks.length;
   const totalDone = habitsDone + tasksDone;
@@ -1225,6 +1381,14 @@ async function getDayPayload(date, options = {}) {
       habitsDone,
       habitsTotal: habits.length,
       habitsPercent,
+      buildDone,
+      buildTotal: buildHabits.length,
+      buildScore,
+      reductionClean,
+      reductionTotal: reductionHabits.length,
+      reductionOccurrences,
+      reductionScore,
+      overallScore,
       tasksDone,
       tasksTotal: tasks.length,
       tasksPercent,
@@ -1235,10 +1399,11 @@ async function getDayPayload(date, options = {}) {
   };
 }
 
-async function getDashboardMonth(monthValue) {
+async function getDashboardMonth(monthValue, options = {}) {
   const range = getMonthRange(monthValue);
   const weeks = getMonthWeeks(monthValue);
   const today = todayISO();
+  const anchorDate = normalizeDate(options.anchorDate || today);
   const habits = await getHabitsForRange(range.start, range.end, true);
 
   const habitLogs = await all(
@@ -1280,13 +1445,23 @@ async function getDashboardMonth(monthValue) {
   const days = {};
 
   habits.forEach((habit) => {
+    const habitType = normalizeHabitType(habit.habit_type);
+
     habitStats[habit.id] = {
       habit_id: habit.id,
       titulo: habit.titulo,
       cor: habit.cor,
+      habit_type: habitType,
+      metricLabel: habitType === 'reduction' ? 'clean days' : 'completion',
       possibleDays: 0,
       doneDays: 0,
+      completedDays: 0,
+      cleanDays: 0,
+      occurrences: 0,
       percent: 0,
+      currentStreak: 0,
+      bestStreak: 0,
+      monthText: '',
     };
   });
 
@@ -1300,6 +1475,11 @@ async function getDashboardMonth(monthValue) {
       past: date < today,
       habitDone: 0,
       habitTotal: 0,
+      buildDone: 0,
+      buildTotal: 0,
+      reductionClean: 0,
+      reductionTotal: 0,
+      reductionOccurrences: 0,
       taskDone: 0,
       taskTotal: 0,
       totalDone: 0,
@@ -1316,17 +1496,38 @@ async function getDashboardMonth(monthValue) {
 
   Object.keys(days).forEach((date) => {
     habits.forEach((habit) => {
+      const habitType = normalizeHabitType(habit.habit_type);
       const visibleForDate =
         Number(habit.ativo) === 1 && dateIsWithinHabit(habit, date);
       const hasHistoricalLog = logMap[`${habit.id}:${date}`] !== undefined;
 
       if (visibleForDate || hasHistoricalLog) {
+        const checked = logMap[`${habit.id}:${date}`] === true;
+        const success = habitSuccessFromChecked(habit, checked);
+
         days[date].habitTotal += 1;
         habitStats[habit.id].possibleDays += 1;
 
-        if (logMap[`${habit.id}:${date}`] === true) {
+        if (success) {
           days[date].habitDone += 1;
           habitStats[habit.id].doneDays += 1;
+        }
+
+        if (habitType === 'reduction') {
+          days[date].reductionTotal += 1;
+          if (checked) {
+            days[date].reductionOccurrences += 1;
+            habitStats[habit.id].occurrences += 1;
+          } else {
+            days[date].reductionClean += 1;
+            habitStats[habit.id].cleanDays += 1;
+          }
+        } else {
+          days[date].buildTotal += 1;
+          if (checked) {
+            days[date].buildDone += 1;
+            habitStats[habit.id].completedDays += 1;
+          }
         }
       }
     });
@@ -1359,12 +1560,71 @@ async function getDashboardMonth(monthValue) {
     day.totalItems = day.habitTotal + day.taskTotal;
     day.percent = calcPercent(day.totalDone, day.totalItems);
     day.habitPercent = calcPercent(day.habitDone, day.habitTotal);
+    day.buildScore = calcPercent(day.buildDone, day.buildTotal);
+    day.reductionScore = calcPercent(day.reductionClean, day.reductionTotal);
     day.taskPercent = calcPercent(day.taskDone, day.taskTotal);
   });
 
-  Object.values(habitStats).forEach((item) => {
+  const allDates = Object.keys(days).sort();
+
+  habits.forEach((habit) => {
+    const item = habitStats[habit.id];
+    const validDates = getHabitValidDates(habit, range.start, range.end, {
+      limitToToday: true,
+    });
+    const streaks = calcHabitStreaks(habit, validDates, logMap, anchorDate);
+
     item.percent = calcPercent(item.doneDays, item.possibleDays);
+    item.currentStreak = streaks.current;
+    item.bestStreak = streaks.best;
+    item.monthText = habitMonthText(habit, item);
   });
+
+  const buildStats = Object.values(habitStats).filter(
+    (item) => item.habit_type === 'build'
+  );
+  const reductionStats = Object.values(habitStats).filter(
+    (item) => item.habit_type === 'reduction'
+  );
+
+  const avgPercent = (items) => {
+    const valid = items.filter((item) => item.possibleDays > 0);
+    if (!valid.length) return 0;
+    return Math.round(
+      valid.reduce((sum, item) => sum + item.percent, 0) / valid.length
+    );
+  };
+
+  const buildScore = avgPercent(buildStats);
+  const reductionScore = avgPercent(reductionStats);
+  const scoreParts = [];
+  if (buildStats.length) scoreParts.push(buildScore);
+  if (reductionStats.length) scoreParts.push(reductionScore);
+  const overallScore = scoreParts.length
+    ? Math.round(scoreParts.reduce((sum, item) => sum + item, 0) / scoreParts.length)
+    : 0;
+
+  const activeStreaks = {
+    build: buildStats
+      .filter((item) => item.currentStreak > 0)
+      .sort((a, b) => b.currentStreak - a.currentStreak)
+      .slice(0, 3),
+    reduction: reductionStats
+      .filter((item) => item.currentStreak > 0)
+      .sort((a, b) => b.currentStreak - a.currentStreak)
+      .slice(0, 3),
+  };
+
+  const bestStreaks = {
+    build: buildStats
+      .filter((item) => item.bestStreak > 0)
+      .sort((a, b) => b.bestStreak - a.bestStreak)
+      .slice(0, 3),
+    reduction: reductionStats
+      .filter((item) => item.bestStreak > 0)
+      .sort((a, b) => b.bestStreak - a.bestStreak)
+      .slice(0, 3),
+  };
 
   const weekStats = weeks.map((week) => {
     let totalDone = 0;
@@ -1409,6 +1669,8 @@ async function getDashboardMonth(monthValue) {
       ordem: Number(habit.ordem || 0),
       data_inicio: habit.data_inicio,
       data_fim: habit.data_fim,
+      habit_type: normalizeHabitType(habit.habit_type),
+      suggested_habit_type: suggestHabitType(habit),
     })),
     logMap,
     tasksByDate,
@@ -1418,8 +1680,15 @@ async function getDashboardMonth(monthValue) {
       monthDone,
       monthItems,
       monthPercent: calcPercent(monthDone, monthItems),
+      buildScore,
+      reductionScore,
+      overallScore,
+      buildHabitCount: buildStats.length,
+      reductionHabitCount: reductionStats.length,
       weekStats,
       habitStats: Object.values(habitStats),
+      activeStreaks,
+      bestStreaks,
     },
   };
 }
@@ -1432,6 +1701,18 @@ async function getStatsMonth(monthValue) {
   const tasksDoneSeries = dates.map((date) => ({
     date,
     total: dashboard.days[date].taskDone,
+  }));
+
+  const reductionOccurrencesSeries = dates.map((date) => ({
+    date,
+    total: dashboard.days[date].reductionOccurrences || 0,
+  }));
+
+  const scoreTrendSeries = dates.map((date) => ({
+    date,
+    buildScore: dashboard.days[date].buildScore || 0,
+    reductionScore: dashboard.days[date].reductionScore || 0,
+    overallScore: dashboard.days[date].percent || 0,
   }));
 
   const dayProgressSeries = dates.map((date) => ({
@@ -1486,6 +1767,8 @@ async function getStatsMonth(monthValue) {
     monthSummary: dashboard.stats,
     dayProgressSeries,
     tasksDoneSeries,
+    reductionOccurrencesSeries,
+    scoreTrendSeries,
     habitStats: dashboard.stats.habitStats,
     weekStats: dashboard.stats.weekStats,
     priorityStats,
@@ -1504,6 +1787,10 @@ function markdownTaskLine(task) {
 }
 
 function markdownHabitLine(habit) {
+  if (habit.habit_type === 'reduction') {
+    return `- [${habit.concluido ? 'x' : ' '}] ${habit.titulo} — ${habit.concluido ? 'occurrence' : 'clean day'}`;
+  }
+
   return `- [${habit.concluido ? 'x' : ' '}] ${habit.titulo}`;
 }
 
@@ -1537,7 +1824,7 @@ ${day.mindset.notas ? day.mindset.notas : '_Sem nota registrada._'}
 app.get('/api/dashboard', async (request, response) => {
   try {
     const month = normalizeMonth(request.query.month);
-    response.json(await getDashboardMonth(month));
+    response.json(await getDashboardMonth(month, { anchorDate: request.query.date }));
   } catch (error) {
     console.error(error);
     response.status(500).json({ error: 'Erro ao carregar dashboard mensal.' });
@@ -1564,6 +1851,76 @@ app.get('/api/stats', async (request, response) => {
   }
 });
 
+app.get('/api/habits', async (request, response) => {
+  try {
+    const habits = await all(
+      `
+      SELECT *
+      FROM habitos
+      ORDER BY ativo DESC, ordem ASC, id ASC
+      `
+    );
+
+    response.json({
+      ok: true,
+      legacyHabitTypeMigration: Boolean(lastMigrationInfo.legacyHabitTypeMigration),
+      habits: habits.map((habit) => ({
+        id: habit.id,
+        titulo: habit.titulo,
+        subtitulo: habit.subtitulo || '',
+        ativo: Number(habit.ativo) === 1,
+        habit_type: normalizeHabitType(habit.habit_type),
+        suggested_habit_type: suggestHabitType(habit),
+        data_inicio: habit.data_inicio,
+        data_fim: habit.data_fim,
+      })),
+    });
+  } catch (error) {
+    console.error(error);
+    response.status(500).json({ error: 'Erro ao listar hábitos.' });
+  }
+});
+
+app.patch('/api/habits/types', async (request, response) => {
+  try {
+    const updates = Array.isArray(request.body?.updates)
+      ? request.body.updates
+      : [];
+
+    if (!updates.length) {
+      return response.status(400).json({ error: 'Nenhuma alteração enviada.' });
+    }
+
+    const now = nowISO();
+
+    for (const update of updates) {
+      const id = Number(update.id);
+      if (!Number.isInteger(id) || id <= 0) continue;
+
+      await run(
+        `
+        UPDATE habitos
+        SET habit_type = ?, updated_at = ?
+        WHERE id = ?
+        `,
+        [normalizeHabitType(update.habit_type), now, id]
+      );
+    }
+
+    lastMigrationInfo.legacyHabitTypeMigration = false;
+
+    response.json({
+      ok: true,
+      updated: updates.length,
+      legacyHabitTypeMigration: false,
+    });
+  } catch (error) {
+    console.error(error);
+    response.status(500).json({ error: 'Erro ao atualizar tipos de hábitos.' });
+  }
+});
+
+
 app.post('/api/habits', async (request, response) => {
   try {
     const now = nowISO();
@@ -1575,8 +1932,8 @@ app.post('/api/habits', async (request, response) => {
 
     const result = await run(
       `
-      INSERT INTO habitos (titulo, subtitulo, ativo, cor, ordem, data_inicio, data_fim, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO habitos (titulo, subtitulo, ativo, cor, ordem, data_inicio, data_fim, habit_type, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
       [
         titulo,
@@ -1588,6 +1945,7 @@ app.post('/api/habits', async (request, response) => {
           ? request.body.data_inicio
           : null,
         isValidISODate(request.body.data_fim) ? request.body.data_fim : null,
+        normalizeHabitType(request.body.habit_type),
         now,
         now,
       ]
@@ -1650,12 +2008,16 @@ app.patch('/api/habits/:id', async (request, response) => {
             ? request.body.data_fim
             : null
           : current.data_fim,
+      habit_type:
+        request.body.habit_type !== undefined
+          ? normalizeHabitType(request.body.habit_type)
+          : normalizeHabitType(current.habit_type),
     };
 
     await run(
       `
       UPDATE habitos
-      SET titulo = ?, subtitulo = ?, ativo = ?, cor = ?, ordem = ?, data_inicio = ?, data_fim = ?, updated_at = ?
+      SET titulo = ?, subtitulo = ?, ativo = ?, cor = ?, ordem = ?, data_inicio = ?, data_fim = ?, habit_type = ?, updated_at = ?
       WHERE id = ?
       `,
       [
@@ -1666,6 +2028,7 @@ app.patch('/api/habits/:id', async (request, response) => {
         next.ordem,
         next.data_inicio,
         next.data_fim,
+        next.habit_type,
         nowISO(),
         request.params.id,
       ]
@@ -2064,14 +2427,190 @@ app.get('/api/day/:date/markdown', async (request, response) => {
   }
 });
 
-app.get('/api/backup', (request, response) => {
-  if (!fs.existsSync(DB_PATH)) {
-    return response
-      .status(404)
-      .json({ error: 'Banco de dados não encontrado.' });
+
+function openTempSQLite(filePath, mode = sqlite3.OPEN_READONLY) {
+  return new Promise((resolve, reject) => {
+    const tempDb = new sqlite3.Database(filePath, mode, (error) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+
+      resolve(tempDb);
+    });
+  });
+}
+
+function closeTempSQLite(tempDb) {
+  return new Promise((resolve, reject) => {
+    tempDb.close((error) => {
+      if (error) reject(error);
+      else resolve();
+    });
+  });
+}
+
+function tempGet(tempDb, sql, params = []) {
+  return new Promise((resolve, reject) => {
+    tempDb.get(sql, params, (error, row) => {
+      if (error) reject(error);
+      else resolve(row);
+    });
+  });
+}
+
+function tempAll(tempDb, sql, params = []) {
+  return new Promise((resolve, reject) => {
+    tempDb.all(sql, params, (error, rows) => {
+      if (error) reject(error);
+      else resolve(rows);
+    });
+  });
+}
+
+async function validateSQLiteBackupFile(filePath, options = {}) {
+  if (!filePath || !fs.existsSync(filePath)) {
+    throw new Error('Arquivo SQLite não encontrado.');
   }
 
-  response.download(DB_PATH, `quiet_progress_${todayISO()}.db`);
+  const stats = fs.statSync(filePath);
+  if (stats.size < 4096) {
+    throw new Error('Backup inválido: arquivo pequeno demais para conter o banco do app.');
+  }
+
+  const tempDb = await openTempSQLite(filePath, sqlite3.OPEN_READONLY);
+
+  try {
+    const integrity = await tempGet(tempDb, `PRAGMA integrity_check`);
+    const integrityValue = Object.values(integrity || {})[0];
+
+    if (integrityValue !== 'ok') {
+      throw new Error(`Arquivo SQLite falhou no integrity_check: ${integrityValue}`);
+    }
+
+    const tableRows = await tempAll(
+      tempDb,
+      `
+      SELECT name
+      FROM sqlite_master
+      WHERE type = 'table'
+        AND name NOT LIKE 'sqlite_%'
+      ORDER BY name ASC
+      `
+    );
+
+    const tableNames = tableRows.map((row) => row.name);
+
+    if (tableNames.length === 0) {
+      throw new Error(
+        'Backup inválido: o banco de origem não contém tabelas. Verifique DB_PATH.'
+      );
+    }
+
+    const expectedTables = ['habitos', 'habitos_log', 'tarefas', 'mindset'];
+    const missing = expectedTables.filter((table) => !tableNames.includes(table));
+
+    if (missing.length) {
+      throw new Error(`Backup inválido. Tabelas ausentes: ${missing.join(', ')}`);
+    }
+
+    if (options.requireAppTables !== false && !tableNames.includes('habitos')) {
+      throw new Error('Backup inválido: tabela habitos não encontrada.');
+    }
+
+    return {
+      ok: true,
+      size: stats.size,
+      tables: tableNames,
+    };
+  } finally {
+    await closeTempSQLite(tempDb);
+  }
+}
+
+async function checkpointDatabase() {
+  try {
+    await run(`PRAGMA wal_checkpoint(FULL)`);
+  } catch (error) {
+    console.warn('[SQLite] WAL checkpoint falhou:', error.message);
+  }
+}
+
+async function copyCurrentDatabaseBackup(reason = 'manual') {
+  if (!fs.existsSync(DB_PATH)) {
+    throw new Error(`Banco ativo não encontrado em DB_PATH: ${DB_PATH}`);
+  }
+
+  await checkpointDatabase();
+
+  const activeValidation = await validateSQLiteBackupFile(DB_PATH);
+
+  if (!activeValidation.tables.length) {
+    throw new Error(
+      'Backup inválido: o banco de origem não contém tabelas. Verifique DB_PATH.'
+    );
+  }
+
+  const safeReason = String(reason).replace(/[^a-z0-9_-]/gi, '_');
+  const backupPath = path.join(
+    BACKUP_DIR,
+    `quiet_progress_${safeReason}_${new Date().toISOString().replace(/[:.]/g, '-')}.db`
+  );
+
+  fs.copyFileSync(DB_PATH, backupPath);
+
+  await validateSQLiteBackupFile(backupPath);
+
+  return backupPath;
+}
+
+function removeSQLiteSidecars(dbPath) {
+  [`${dbPath}-wal`, `${dbPath}-shm`].forEach((sidecar) => {
+    if (fs.existsSync(sidecar)) {
+      fs.rmSync(sidecar, { force: true });
+    }
+  });
+}
+
+
+app.get('/api/backup', async (request, response) => {
+  try {
+    if (!fs.existsSync(DB_PATH)) {
+      return response.status(404).json({
+        error: `Banco de dados não encontrado em DB_PATH: ${DB_PATH}`,
+      });
+    }
+
+    await checkpointDatabase();
+
+    const activeValidation = await validateSQLiteBackupFile(DB_PATH);
+
+    if (!activeValidation.tables.length) {
+      return response.status(500).json({
+        error:
+          'Backup inválido: o banco de origem não contém tabelas. Verifique DB_PATH.',
+        dbPath: DB_PATH,
+      });
+    }
+
+    const backupPath = await copyCurrentDatabaseBackup('download');
+    const backupValidation = await validateSQLiteBackupFile(backupPath);
+
+    response.setHeader('X-Quiet-Progress-DB-Path', DB_PATH);
+    response.setHeader('X-Quiet-Progress-DB-Tables', backupValidation.tables.join(','));
+
+    response.download(backupPath, `quiet_progress_${todayISO()}.db`, (error) => {
+      if (error) {
+        console.error('[Backup] Falha no download:', error);
+      }
+    });
+  } catch (error) {
+    console.error('[Backup] Erro:', error);
+    response.status(500).json({
+      error: error.message || 'Erro ao gerar backup.',
+      dbPath: DB_PATH,
+    });
+  }
 });
 
 app.post(
@@ -2079,6 +2618,7 @@ app.post(
   upload.single('database'),
   async (request, response) => {
     const uploadedPath = request.file?.path;
+    let safetyBackupPath = null;
 
     try {
       if (!request.file) {
@@ -2087,35 +2627,67 @@ app.post(
           .json({ error: 'Arquivo .db é obrigatório.' });
       }
 
-      const backupBeforeRestore = `${DB_PATH}.before_restore_${Date.now()}.bak`;
+      const uploadedValidation = await validateSQLiteBackupFile(uploadedPath);
+
+      safetyBackupPath = await copyCurrentDatabaseBackup('before_restore');
 
       await closeDatabase();
 
-      if (fs.existsSync(DB_PATH)) {
-        fs.copyFileSync(DB_PATH, backupBeforeRestore);
-      }
+      removeSQLiteSidecars(DB_PATH);
 
       fs.copyFileSync(uploadedPath, DB_PATH);
 
       connectDatabase();
-      await initDatabase();
+      const migrationInfo = await initDatabase();
+      lastMigrationInfo = migrationInfo || { legacyHabitTypeMigration: false };
+
+      const restoredValidation = await validateSQLiteBackupFile(DB_PATH);
+      const healthCheck = await get(`SELECT COUNT(*) AS total FROM habitos`);
+
+      if (!healthCheck) {
+        throw new Error('Banco restaurado não respondeu ao health check.');
+      }
 
       response.json({
         ok: true,
-        message: 'Banco restaurado com sucesso.',
+        message: 'Restore concluído. Banco validado e recarregado.',
+        requiresRestart: false,
+        legacyHabitTypeMigration: Boolean(lastMigrationInfo.legacyHabitTypeMigration),
+        dbPath: DB_PATH,
+        restoredTables: restoredValidation.tables,
+        uploadedTables: uploadedValidation.tables,
+        safetyBackup: safetyBackupPath ? path.basename(safetyBackupPath) : null,
       });
     } catch (error) {
-      console.error(error);
+      console.error('[Restore] Erro:', error);
 
       try {
-        connectDatabase();
-      } catch (reconnectError) {
-        console.error('[Restore] Falha ao reconectar banco:', reconnectError);
+        await closeDatabase();
+      } catch {}
+
+      if (safetyBackupPath && fs.existsSync(safetyBackupPath)) {
+        try {
+          fs.copyFileSync(safetyBackupPath, DB_PATH);
+          removeSQLiteSidecars(DB_PATH);
+          connectDatabase();
+          await initDatabase();
+          console.warn('[Restore] Rollback automático aplicado:', safetyBackupPath);
+        } catch (rollbackError) {
+          console.error('[Restore] Falha no rollback automático:', rollbackError);
+        }
+      } else {
+        try {
+          connectDatabase();
+          await initDatabase();
+        } catch (reconnectError) {
+          console.error('[Restore] Falha ao reconectar banco:', reconnectError);
+        }
       }
 
-      response.status(500).json({
-        error: 'Erro ao restaurar banco de dados.',
-        details: error.message,
+      response.status(400).json({
+        error: error.message || 'Erro ao restaurar banco de dados.',
+        dbPath: DB_PATH,
+        restoredPreviousDatabase: Boolean(safetyBackupPath),
       });
     } finally {
       if (uploadedPath && fs.existsSync(uploadedPath)) {
@@ -2125,12 +2697,59 @@ app.post(
   }
 );
 
+
+function uploadErrorHandler(error, request, response, next) {
+  if (!error) {
+    next();
+    return;
+  }
+
+  if (error instanceof multer.MulterError) {
+    response.status(400).json({
+      error: 'Erro no upload do arquivo.',
+      details: error.message,
+    });
+    return;
+  }
+
+  response.status(400).json({
+    error: error.message || 'Erro no upload do arquivo.',
+  });
+}
+
+app.use(uploadErrorHandler);
+
+
 app.get('*', (request, response) => {
   response.sendFile(path.join(__dirname, '..', 'public', 'index.html'));
 });
 
+async function gracefulShutdown(signal) {
+  console.log(`[Shutdown] Recebido ${signal}. Fechando SQLite...`);
+
+  try {
+    await closeDatabase();
+    console.log('[Shutdown] SQLite fechado com segurança.');
+    process.exit(0);
+  } catch (error) {
+    console.error('[Shutdown] Falha ao fechar SQLite:', error);
+    process.exit(1);
+  }
+}
+
+process.on('SIGINT', () => {
+  gracefulShutdown('SIGINT');
+});
+
+process.on('SIGTERM', () => {
+  gracefulShutdown('SIGTERM');
+});
+
+
 initDatabase()
-  .then(() => {
+  .then((migrationInfo) => {
+    lastMigrationInfo = migrationInfo || { legacyHabitTypeMigration: false };
+    console.log(`[SQLite] DB_PATH ativo: ${DB_PATH}`);
     startReminderScheduler();
 
     app.listen(PORT, HOST, () => {

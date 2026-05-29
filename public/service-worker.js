@@ -1,4 +1,4 @@
-const CACHE_VERSION = 'quiet-progress-shell-v1';
+const CACHE_VERSION = 'quiet-progress-shell-v5-precommit';
 const APP_SHELL_ASSETS = [
   '/manifest.json',
   '/styles.css',

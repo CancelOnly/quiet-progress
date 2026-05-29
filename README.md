@@ -208,3 +208,99 @@ Todos ficam protegidos por login, exceto os arquivos públicos necessários para
 7. Crie/edite lembretes.
 8. Feche o PWA e aguarde o horário configurado.
 
+
+
+## Pre-commit / Operação local
+
+Antes de commitar:
+
+```bash
+npm run check
+git status --short
+```
+
+Não commitar:
+
+```text
+.env
+quiet_progress.db
+*.db
+*.db-wal
+*.db-shm
+backups/
+logs/
+exports/
+uploads/*
+node_modules/
+.cloudflared/
+```
+
+O repositório deve conter apenas código, docs, exemplos e `uploads/.gitkeep`.
+
+## PM2
+
+Esta versão inclui `ecosystem.config.cjs` para evitar o problema clássico de o PM2 iniciar o app em outro diretório e criar um `quiet_progress.db` vazio.
+
+Uso recomendado:
+
+```bash
+npm install --omit=dev
+cp .env.example .env
+nano .env
+npm run pm2:start
+npm run pm2:logs
+```
+
+Comandos úteis:
+
+```bash
+pm2 status
+pm2 logs quiet-progress --lines 100
+pm2 restart quiet-progress
+pm2 save
+```
+
+O `ecosystem.config.cjs` fixa `cwd` na raiz do projeto e, se `DB_PATH` não estiver no `.env`, usa:
+
+```text
+./quiet_progress.db
+```
+
+Para servidor/homelab, prefira definir no `.env`:
+
+```env
+DB_PATH=/opt/quiet-progress/quiet_progress.db
+```
+
+## Logs
+
+Com PM2, os logs ficam em:
+
+```text
+logs/pm2-out.log
+logs/pm2-error.log
+```
+
+Esses arquivos são ignorados pelo Git.
+
+## Backup/restore
+
+O backup usa exatamente o `DB_PATH` ativo, roda checkpoint WAL e valida:
+
+```text
+SQLite válido
+integrity_check ok
+tabelas não vazias
+habitos
+habitos_log
+tarefas
+mindset
+```
+
+Se o backup baixado vier com 4 KB e 0 tabelas, o servidor está apontando para o `DB_PATH` errado.
+Verifique o log de startup:
+
+```text
+[SQLite] Banco conectado em: /caminho/real/quiet_progress.db
+[SQLite] DB_PATH ativo: /caminho/real/quiet_progress.db
+```

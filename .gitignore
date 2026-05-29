@@ -3,7 +3,6 @@ node_modules/
 
 # Environment / secrets
 .env
-.env.example
 .env.local
 .env.*.local
 
@@ -15,6 +14,7 @@ quiet_progress.db
 *.db-journal
 *.sqlite
 *.sqlite3
+*.bak
 
 # Runtime/generated data
 backups/
@@ -29,3 +29,11 @@ uploads/
 Thumbs.db
 .vscode/
 .idea/
+.env.development
+.env.production
+.cloudflared/
+*.pem
+*.key
+*.crt
+*credentials*.json
+*.secret.json

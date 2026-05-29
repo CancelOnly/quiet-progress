@@ -10,6 +10,7 @@ const state = {
   day: null,
   stats: null,
   health: null,
+  shouldAutoScrollHabitMatrix: true,
 };
 
 const charts = {
@@ -17,6 +18,7 @@ const charts = {
   tasksBar: null,
   mindsetLine: null,
   habitBar: null,
+  reductionOccurrencesBar: null,
   weekBar: null,
 };
 
@@ -25,6 +27,10 @@ let lockinInitialSeconds = 25 * 60;
 let lockinRemainingSeconds = lockinInitialSeconds;
 let lockinInterval = null;
 let lockinRunning = false;
+let lockinExpectedEndTime = null;
+let lockinAudioContext = null;
+let lockinSoundEnabled =
+  localStorage.getItem('quietProgress.lockin.sound') !== 'false';
 
 const elements = {
   sidebar: document.getElementById('sidebar'),
@@ -60,6 +66,12 @@ const elements = {
   overviewHabitStat: document.getElementById('overviewHabitStat'),
   overviewTaskStat: document.getElementById('overviewTaskStat'),
   overviewTotalStat: document.getElementById('overviewTotalStat'),
+  overviewBuildScore: document.getElementById('overviewBuildScore'),
+  overviewReductionScore: document.getElementById('overviewReductionScore'),
+  overviewOverallScore: document.getElementById('overviewOverallScore'),
+  overviewActiveStreaks: document.getElementById('overviewActiveStreaks'),
+  overviewBestStreaks: document.getElementById('overviewBestStreaks'),
+  overviewReductionSummary: document.getElementById('overviewReductionSummary'),
   overviewProgressFill: document.getElementById('overviewProgressFill'),
   overviewTaskList: document.getElementById('overviewTaskList'),
   overviewAddTaskBtn: document.getElementById('overviewAddTaskBtn'),
@@ -113,6 +125,7 @@ const elements = {
   lockinStartBtn: document.getElementById('lockinStartBtn'),
   lockinPauseBtn: document.getElementById('lockinPauseBtn'),
   lockinResetBtn: document.getElementById('lockinResetBtn'),
+  lockinSoundBtn: document.getElementById('lockinSoundBtn'),
   lockinPresetButtons: Array.from(document.querySelectorAll('.lockin-preset')),
   lockinCustomWrap: document.getElementById('lockinCustomWrap'),
   lockinCustomInput: document.getElementById('lockinCustomInput'),
@@ -121,6 +134,7 @@ const elements = {
   tasksBarChart: document.getElementById('tasksBarChart'),
   mindsetLineChart: document.getElementById('mindsetLineChart'),
   habitBarChart: document.getElementById('habitBarChart'),
+  reductionOccurrencesChart: document.getElementById('reductionOccurrencesChart'),
   weekBarChart: document.getElementById('weekBarChart'),
 
   modalOverlay: document.getElementById('modalOverlay'),
@@ -268,6 +282,7 @@ function setView(view) {
   if (view === 'journal') loadJournal();
   if (view === 'backup') loadHealth();
   if (view === 'tracker') {
+    state.shouldAutoScrollHabitMatrix = true;
     renderTracker();
   }
 }
@@ -334,7 +349,7 @@ async function loadDashboard() {
   elements.monthPicker.value = state.currentMonth;
   elements.journalMonthFilter.value = state.currentMonth;
 
-  const dashboard = await api(`/dashboard?month=${state.currentMonth}`);
+  const dashboard = await api(`/dashboard?month=${state.currentMonth}&date=${state.selectedDate}`);
   const stats = await api(`/stats?month=${state.currentMonth}`);
 
   state.dashboard = dashboard;
@@ -357,16 +372,33 @@ async function loadDay(dateISO = state.selectedDate) {
 function renderOverview() {
   if (!state.day) return;
 
+  const progress = state.day.progress || {};
+  const stats = state.dashboard?.stats || {};
+
   elements.overviewTitle.textContent = `Resumo — ${formatLongDate(state.selectedDate)}`;
-  elements.overviewProgressChip.textContent = `${state.day.progress.totalPercent}%`;
-  elements.overviewHabitStat.textContent = `${state.day.progress.habitsDone}/${state.day.progress.habitsTotal}`;
-  elements.overviewTaskStat.textContent = `${state.day.progress.tasksDone}/${state.day.progress.tasksTotal}`;
-  elements.overviewTotalStat.textContent = `${state.day.progress.totalPercent}%`;
-  elements.overviewProgressFill.style.width = `${state.day.progress.totalPercent}%`;
+  elements.overviewProgressChip.textContent = `${progress.overallScore ?? progress.totalPercent ?? 0}%`;
+  elements.overviewHabitStat.textContent = `${progress.habitsDone}/${progress.habitsTotal}`;
+  elements.overviewTaskStat.textContent = `${progress.tasksDone}/${progress.tasksTotal}`;
+  elements.overviewTotalStat.textContent = `${progress.totalPercent}%`;
+  elements.overviewProgressFill.style.width = `${progress.overallScore ?? progress.totalPercent ?? 0}%`;
   elements.overviewProgressFill.classList.toggle(
     'complete',
-    state.day.progress.totalPercent === 100
+    (progress.overallScore ?? progress.totalPercent ?? 0) === 100
   );
+
+  if (elements.overviewBuildScore) {
+    elements.overviewBuildScore.textContent = `${stats.buildScore ?? progress.buildScore ?? 0}%`;
+  }
+
+  if (elements.overviewReductionScore) {
+    elements.overviewReductionScore.textContent = `${stats.reductionScore ?? progress.reductionScore ?? 0}%`;
+  }
+
+  if (elements.overviewOverallScore) {
+    elements.overviewOverallScore.textContent = `${stats.overallScore ?? progress.overallScore ?? 0}%`;
+  }
+
+  renderOverviewStreaks();
 
   renderTaskList(elements.overviewTaskList, state.day.tasks.slice(0, 5), {
     empty: 'Nenhuma tarefa neste dia.',
@@ -386,6 +418,121 @@ function renderOverview() {
     : 'Sem nota registrada para este dia.';
 }
 
+function renderStreakItem(item, mode) {
+  const isReduction = item.habit_type === 'reduction';
+  const icon = isReduction ? '🛡️' : '🔥';
+  const current = Number(item.currentStreak || 0);
+  const best = Number(item.bestStreak || 0);
+
+  if (isReduction) {
+    return `
+      <div class="streak-item reduction">
+        <span>${icon}</span>
+        <strong>${escapeHTML(item.titulo)}</strong>
+        <em>Clean streak: ${current} ${current === 1 ? 'day' : 'days'}</em>
+        <small>Best clean streak: ${best} ${best === 1 ? 'day' : 'days'} · Occurrences this month: ${Number(item.occurrences || 0)}</small>
+      </div>
+    `;
+  }
+
+  return `
+    <div class="streak-item build">
+      <span>${icon}</span>
+      <strong>${escapeHTML(item.titulo)}</strong>
+      <em>Current streak: ${current} ${current === 1 ? 'day' : 'days'}</em>
+      <small>Best streak: ${best} ${best === 1 ? 'day' : 'days'} · Month completed: ${Number(item.completedDays || 0)}/${Number(item.possibleDays || 0)}</small>
+    </div>
+  `;
+}
+
+function renderStreakGroup(title, items, mode, emptyText) {
+  return `
+    <div class="streak-group">
+      <h4>${escapeHTML(title)}</h4>
+      ${
+        items.length
+          ? items.map((item) => renderStreakItem(item, mode)).join('')
+          : `<div class="empty-state small">${escapeHTML(emptyText)}</div>`
+      }
+    </div>
+  `;
+}
+
+function renderOverviewStreaks() {
+  if (!elements.overviewActiveStreaks || !elements.overviewBestStreaks) return;
+
+  const stats = state.dashboard?.stats || {};
+  const active = stats.activeStreaks || { build: [], reduction: [] };
+  const best = stats.bestStreaks || { build: [], reduction: [] };
+
+  elements.overviewActiveStreaks.innerHTML = [
+    renderStreakGroup(
+      'Active Build Streaks',
+      active.build || [],
+      'active',
+      'No active build streaks yet.'
+    ),
+    renderStreakGroup(
+      'Active Clean Streaks',
+      active.reduction || [],
+      'active',
+      'No active clean streaks yet.'
+    ),
+  ].join('');
+
+  elements.overviewBestStreaks.innerHTML = [
+    renderStreakGroup(
+      'Best Build Streaks',
+      best.build || [],
+      'best',
+      'No best build streak yet.'
+    ),
+    renderStreakGroup(
+      'Best Clean Streaks',
+      best.reduction || [],
+      'best',
+      'No best clean streak yet.'
+    ),
+  ].join('');
+
+  renderReductionSummary();
+}
+
+function renderReductionSummary() {
+  if (!elements.overviewReductionSummary) return;
+
+  const reductionStats = (state.dashboard?.stats?.habitStats || []).filter(
+    (item) => item.habit_type === 'reduction'
+  );
+
+  if (!reductionStats.length) {
+    elements.overviewReductionSummary.innerHTML = `
+      <span>🛡️ No reduction habits yet</span>
+    `;
+    return;
+  }
+
+  const cleanDays = reductionStats.reduce(
+    (sum, item) => sum + Number(item.cleanDays || 0),
+    0
+  );
+  const occurrences = reductionStats.reduce(
+    (sum, item) => sum + Number(item.occurrences || 0),
+    0
+  );
+  const bestClean = reductionStats.reduce(
+    (max, item) => Math.max(max, Number(item.bestStreak || 0)),
+    0
+  );
+
+  elements.overviewReductionSummary.innerHTML = `
+    <span>🛡️ Clean days this month: ${cleanDays}</span>
+    <span>⚠️ Occurrences this month: ${occurrences}</span>
+    <span>🏆 Best clean streak: ${bestClean} ${bestClean === 1 ? 'day' : 'days'}</span>
+  `;
+}
+
+
 function renderTracker() {
   if (!state.dashboard) return;
 
@@ -402,14 +549,6 @@ function renderHabitMatrix() {
   const weeks = state.dashboard.weeks;
   const habits = state.dashboard.habits;
   const logMap = state.dashboard.logMap || {};
-
-  /*
-    Importante:
-    O Habit Matrix agora usa UMA ÚNICA grade CSS.
-    Header de semanas, header de dias e checkboxes compartilham
-    as mesmas colunas: coluna de hábito + repeat(totalDays, coluna do dia).
-    Isso elimina o desalinhamento causado por wrappers de semana com padding/gap próprios.
-  */
   const days = weeks.flatMap((week) => week.days).filter(Boolean);
   const totalDays = days.length;
 
@@ -462,10 +601,15 @@ function renderHabitMatrix() {
   const rows = habits
     .map((habit, habitIndex) => {
       const row = habitIndex + 3;
+      const habitType = habit.habit_type === 'reduction' ? 'reduction' : 'build';
+      const typeLabel = habitType === 'reduction' ? 'REDUCTION' : 'BUILD';
 
       const habitInfo = `
-        <div class="qpmatrix-habit habit-info" style="grid-column: 1; grid-row: ${row};">
-          <strong>${escapeHTML(habit.titulo)}</strong>
+        <div class="qpmatrix-habit habit-info ${habitType}" style="grid-column: 1; grid-row: ${row};">
+          <div class="habit-title-row">
+            <strong>${escapeHTML(habit.titulo)}</strong>
+            <span class="habit-type-badge ${habitType}">${typeLabel}</span>
+          </div>
           <small>${escapeHTML(habit.subtitulo || '')}</small>
           <div class="habit-row-actions">
             <button class="row-link edit-habit-inline" type="button" data-habit-id="${habit.id}">Editar</button>
@@ -482,12 +626,20 @@ function renderHabitMatrix() {
           const beforeStart = habit.data_inicio && day.date < habit.data_inicio;
           const afterEnd = habit.data_fim && day.date > habit.data_fim;
           const disabled = beforeStart || afterEnd || !habit.ativo;
-          const done = logMap[`${habit.id}:${day.date}`] === true;
-          const tooltip = `${habit.titulo} — ${formatShortDate(day.date)} — ${done ? 'concluído' : 'não concluído'}`;
+          const checked = logMap[`${habit.id}:${day.date}`] === true;
+          const statusText =
+            habitType === 'reduction'
+              ? checked
+                ? 'occurrence logged'
+                : 'clean day'
+              : checked
+                ? 'done'
+                : 'not done';
+          const tooltip = `${habit.titulo} — ${formatShortDate(day.date)} — ${statusText}`;
 
           return `
             <button
-              class="qpmatrix-check habit-check-cell ${done ? 'done is-done' : ''} ${isToday ? 'is-today' : ''} ${isSelected ? 'is-selected' : ''} ${isFuture ? 'is-future' : ''} ${disabled ? 'disabled' : ''}"
+              class="qpmatrix-check habit-check-cell ${habitType} ${checked ? 'done is-done' : ''} ${isToday ? 'is-today' : ''} ${isSelected ? 'is-selected' : ''} ${isFuture ? 'is-future' : ''} ${disabled ? 'disabled' : ''}"
               type="button"
               data-habit-id="${habit.id}"
               data-date="${day.date}"
@@ -514,33 +666,89 @@ function renderHabitMatrix() {
       ${rows || '<div class="empty-state qpmatrix-empty" style="grid-column: 1 / -1; grid-row: 3;">Nenhum hábito ativo. Use + Hábito para criar.</div>'}
     </div>
   `;
+
+  maybeAutoScrollHabitMatrix();
 }
+
+function maybeAutoScrollHabitMatrix() {
+  if (!state.shouldAutoScrollHabitMatrix) return;
+
+  const wrapper = elements.habitMatrix?.closest('.habit-matrix-wrap');
+  if (!wrapper) return;
+
+  const target =
+    elements.habitMatrix.querySelector(`[data-select-date="${state.selectedDate}"]`) ||
+    elements.habitMatrix.querySelector(`[data-select-date="${state.todayDate}"]`);
+
+  if (!target) return;
+
+  window.requestAnimationFrame(() => {
+    const left =
+      target.offsetLeft - wrapper.clientWidth / 2 + target.clientWidth / 2;
+
+    wrapper.scrollTo({
+      left: Math.max(0, left),
+      behavior: 'smooth',
+    });
+
+    state.shouldAutoScrollHabitMatrix = false;
+  });
+}
+
 function renderHabitProgressList() {
   if (!state.dashboard) return;
 
   const stats = state.dashboard.stats.habitStats || [];
+  const buildStats = stats
+    .filter((item) => item.habit_type !== 'reduction')
+    .sort((a, b) => b.percent - a.percent);
+  const reductionStats = stats
+    .filter((item) => item.habit_type === 'reduction')
+    .sort((a, b) => b.percent - a.percent);
+
+  const renderItem = (item) => {
+    const isReduction = item.habit_type === 'reduction';
+    const tone = item.percent >= 70 ? 'good' : item.percent >= 35 ? 'mid' : 'bad';
+    const label = isReduction ? 'clean rate' : 'completion';
+    const detail = isReduction
+      ? `${Number(item.cleanDays || 0)}/${Number(item.possibleDays || 0)} clean days · ${Number(item.occurrences || 0)} occurrences`
+      : `${Number(item.completedDays || 0)}/${Number(item.possibleDays || 0)} completed`;
+
+    return `
+      <div class="habit-progress-item ${isReduction ? 'reduction' : 'build'}">
+        <div>
+          <strong>${escapeHTML(item.titulo)}</strong>
+          <span>${escapeHTML(label)}</span>
+        </div>
+        <small>${escapeHTML(detail)}</small>
+        <div class="habit-progress-bar">
+          <i class="${tone}" style="width:${item.percent}%"></i>
+        </div>
+        <b>${item.percent}%</b>
+      </div>
+    `;
+  };
+
+  const renderGroup = (title, items, emptyText) => `
+    <section class="habit-progress-group">
+      <h3>${escapeHTML(title)}</h3>
+      ${
+        items.length
+          ? items.map(renderItem).join('')
+          : `<div class="empty-state small">${escapeHTML(emptyText)}</div>`
+      }
+    </section>
+  `;
 
   elements.habitProgressList.innerHTML = stats.length
-    ? stats
-        .sort((a, b) => b.percent - a.percent)
-        .map((item) => {
-          const tone =
-            item.percent >= 70 ? 'good' : item.percent >= 35 ? 'mid' : 'bad';
-
-          return `
-            <div class="habit-progress-item">
-              <div>
-                <strong>${escapeHTML(item.titulo)}</strong>
-                <span>${item.doneDays}/${item.possibleDays} dias</span>
-              </div>
-              <div class="habit-progress-bar">
-                <i class="${tone}" style="width:${item.percent}%"></i>
-              </div>
-              <b>${item.percent}%</b>
-            </div>
-          `;
-        })
-        .join('')
+    ? [
+        renderGroup('Build completion', buildStats, 'No build habits yet.'),
+        renderGroup(
+          'Reduction clean rate',
+          reductionStats,
+          'No reduction habits yet.'
+        ),
+      ].join('')
     : '<div class="empty-state">Sem dados de hábitos neste mês.</div>';
 }
 
@@ -706,6 +914,7 @@ function renderCharts() {
   renderTasksBar();
   renderMindsetLine();
   renderHabitBar();
+  renderReductionOccurrencesBar();
   renderWeekBar();
 }
 
@@ -753,23 +962,43 @@ function baseChartOptions(extra = {}) {
 function renderMonthDonut() {
   destroyChart('monthDonut');
 
-  const done = state.stats.monthSummary.monthDone || 0;
-  const total = state.stats.monthSummary.monthItems || 0;
-  const pending = Math.max(total - done, 0);
+  const stats = state.stats.monthSummary || {};
+  const values = [
+    stats.buildScore || 0,
+    stats.reductionScore || 0,
+    stats.overallScore || stats.monthPercent || 0,
+  ];
 
   charts.monthDonut = new Chart(elements.monthDonutChart.getContext('2d'), {
-    type: 'doughnut',
+    type: 'bar',
     data: {
-      labels: ['Concluído', 'Pendente'],
+      labels: ['Build', 'Reduction', 'Overall'],
       datasets: [
         {
-          data: [done, pending],
-          backgroundColor: ['#DEFF9A', 'rgba(255,255,255,0.06)'],
-          borderWidth: 0,
+          label: 'Score',
+          data: values,
+          backgroundColor: ['#DEFF9A', '#FFD166', '#11CAA0'],
+          borderRadius: 999,
         },
       ],
     },
-    options: baseChartOptions({ cutout: '70%', scales: undefined }),
+    options: baseChartOptions({
+      plugins: { ...baseChartOptions().plugins, legend: { display: false } },
+      scales: {
+        y: {
+          min: 0,
+          max: 100,
+          ticks: { color: '#777B86', callback: (v) => `${v}%` },
+          grid: { display: false },
+          border: { display: false },
+        },
+        x: {
+          ticks: { color: '#A2A7B4' },
+          grid: { display: false },
+          border: { display: false },
+        },
+      },
+    }),
   });
 }
 
@@ -777,6 +1006,7 @@ function renderTasksBar() {
   destroyChart('tasksBar');
 
   const series = state.stats.tasksDoneSeries || [];
+  const maxValue = Math.max(...series.map((item) => Number(item.total || 0)), 1);
 
   charts.tasksBar = new Chart(elements.tasksBarChart.getContext('2d'), {
     type: 'bar',
@@ -784,15 +1014,30 @@ function renderTasksBar() {
       labels: series.map((item) => item.date.slice(-2)),
       datasets: [
         {
-          label: 'Tarefas concluídas',
+          label: 'Tasks done',
           data: series.map((item) => item.total),
           backgroundColor: '#11CAA0',
           borderRadius: 999,
+          minBarLength: 4,
         },
       ],
     },
     options: baseChartOptions({
       plugins: { ...baseChartOptions().plugins, legend: { display: false } },
+      scales: {
+        y: {
+          beginAtZero: true,
+          suggestedMax: maxValue <= 1 ? 2 : maxValue + 1,
+          ticks: { color: '#777B86', precision: 0, stepSize: 1 },
+          grid: { display: false },
+          border: { display: false },
+        },
+        x: {
+          ticks: { color: '#777B86', maxRotation: 0 },
+          grid: { display: false },
+          border: { display: false },
+        },
+      },
     }),
   });
 }
@@ -859,7 +1104,14 @@ function renderMindsetLine() {
 function renderHabitBar() {
   destroyChart('habitBar');
 
-  const series = state.stats.habitStats || [];
+  const rawSeries = state.stats.habitStats || [];
+  const buildSeries = rawSeries
+    .filter((item) => item.habit_type !== 'reduction')
+    .sort((a, b) => b.percent - a.percent);
+  const reductionSeries = rawSeries
+    .filter((item) => item.habit_type === 'reduction')
+    .sort((a, b) => b.percent - a.percent);
+  const series = [...buildSeries, ...reductionSeries];
 
   charts.habitBar = new Chart(elements.habitBarChart.getContext('2d'), {
     type: 'bar',
@@ -867,15 +1119,43 @@ function renderHabitBar() {
       labels: series.map((item) => item.titulo),
       datasets: [
         {
-          label: '%',
-          data: series.map((item) => item.percent),
+          label: 'Build completion',
+          data: series.map((item) =>
+            item.habit_type === 'reduction' ? null : item.percent
+          ),
           backgroundColor: '#BC84EE',
+          borderRadius: 999,
+        },
+        {
+          label: 'Reduction clean rate',
+          data: series.map((item) =>
+            item.habit_type === 'reduction' ? item.percent : null
+          ),
+          backgroundColor: '#FFD166',
           borderRadius: 999,
         },
       ],
     },
     options: baseChartOptions({
       indexAxis: 'y',
+      plugins: {
+        ...baseChartOptions().plugins,
+        tooltip: {
+          ...baseChartOptions().plugins.tooltip,
+          callbacks: {
+            label: (context) => {
+              const item = series[context.dataIndex];
+              if (!item) return `${context.parsed.x}%`;
+
+              if (item.habit_type === 'reduction') {
+                return `${item.percent}% clean rate · ${Number(item.occurrences || 0)} occurrences`;
+              }
+
+              return `${item.percent}% completion · ${Number(item.completedDays || 0)}/${Number(item.possibleDays || 0)} completed`;
+            },
+          },
+        },
+      },
       scales: {
         x: {
           min: 0,
@@ -893,6 +1173,53 @@ function renderHabitBar() {
     }),
   });
 }
+
+
+function renderReductionOccurrencesBar() {
+  destroyChart('reductionOccurrencesBar');
+
+  if (!elements.reductionOccurrencesChart) return;
+
+  const series = state.stats.reductionOccurrencesSeries || [];
+  const maxValue = Math.max(...series.map((item) => Number(item.total || 0)), 1);
+
+  charts.reductionOccurrencesBar = new Chart(
+    elements.reductionOccurrencesChart.getContext('2d'),
+    {
+      type: 'bar',
+      data: {
+        labels: series.map((item) => item.date.slice(-2)),
+        datasets: [
+          {
+            label: 'Occurrences',
+            data: series.map((item) => item.total),
+            backgroundColor: '#FFD166',
+            borderRadius: 999,
+            minBarLength: 3,
+          },
+        ],
+      },
+      options: baseChartOptions({
+        plugins: { ...baseChartOptions().plugins, legend: { display: false } },
+        scales: {
+          y: {
+            beginAtZero: true,
+            suggestedMax: maxValue <= 1 ? 2 : maxValue + 1,
+            ticks: { color: '#777B86', precision: 0, stepSize: 1 },
+            grid: { display: false },
+            border: { display: false },
+          },
+          x: {
+            ticks: { color: '#777B86', maxRotation: 0 },
+            grid: { display: false },
+            border: { display: false },
+          },
+        },
+      }),
+    }
+  );
+}
+
 
 function renderWeekBar() {
   destroyChart('weekBar');
@@ -974,6 +1301,7 @@ function openHabitModal(habit = null, defaults = {}) {
     ? habit.data_inicio || ''
     : defaults.data_inicio || '';
   const dataFim = isEdit ? habit.data_fim || '' : '';
+  const habitType = habit?.habit_type === 'reduction' ? 'reduction' : 'build';
 
   openModal({
     title: isEdit ? 'Editar hábito' : 'Criar hábito',
@@ -983,19 +1311,36 @@ function openHabitModal(habit = null, defaults = {}) {
     confirmText: isEdit ? 'Salvar' : 'Criar',
     confirmClass: 'confirm',
     body: `
-      <div class="modal-form">
-        <label>Nome<input name="titulo" type="text" value="${escapeHTML(habit?.titulo || '')}" placeholder="Ex: Projeto pessoal" /></label>
-        <label>Descrição<input name="subtitulo" type="text" value="${escapeHTML(habit?.subtitulo || '')}" placeholder="Descrição curta" /></label>
-        <label>Cor<input name="cor" type="color" value="${escapeHTML(habit?.cor || '#11caa0')}" /></label>
+      <div class="modal-form habit-modal-form">
+        <label class="modal-field-full">Nome<input name="titulo" type="text" value="${escapeHTML(habit?.titulo || '')}" placeholder="Ex: Bloco de foco" /></label>
+        <label class="modal-field-full">Descrição<input name="subtitulo" type="text" value="${escapeHTML(habit?.subtitulo || '')}" placeholder="Descrição curta" /></label>
+
+        <label>Tipo de hábito
+          <select name="habit_type" id="habitTypeSelect">
+            <option value="build" ${habitType === 'build' ? 'selected' : ''}>Build</option>
+            <option value="reduction" ${habitType === 'reduction' ? 'selected' : ''}>Reduction</option>
+          </select>
+        </label>
+
+        <label class="color-field">Cor
+          <span class="color-input-wrap">
+            <input name="cor" type="color" value="${escapeHTML(habit?.cor || '#11caa0')}" />
+            <span id="habitColorPreview">${escapeHTML(habit?.cor || '#11caa0')}</span>
+          </span>
+        </label>
+
+        <div class="habit-type-help modal-field-full" id="habitTypeHelp"></div>
+
         <label>Data início<input name="data_inicio" type="date" value="${escapeHTML(dataInicio)}" /></label>
         <label>Data fim<input name="data_fim" type="date" value="${escapeHTML(dataFim)}" /></label>
-        <label class="check-row"><input name="ativo" type="checkbox" ${habit?.ativo === false ? '' : 'checked'} /> Ativo</label>
+        <label class="check-row modal-field-full"><input name="ativo" type="checkbox" ${habit?.ativo === false ? '' : 'checked'} /> Ativo</label>
       </div>
     `,
     onConfirm: async () => {
       const payload = {
         titulo: formValue('titulo'),
         subtitulo: formValue('subtitulo'),
+        habit_type: formValue('habit_type') === 'reduction' ? 'reduction' : 'build',
         cor: formValue('cor'),
         data_inicio: formValue('data_inicio') || null,
         data_fim: formValue('data_fim') || null,
@@ -1018,10 +1363,42 @@ function openHabitModal(habit = null, defaults = {}) {
         showToast('Hábito criado.');
       }
 
+      state.shouldAutoScrollHabitMatrix = false;
       await refreshAll();
       return true;
     },
   });
+
+  const typeSelect = elements.modalBody.querySelector('#habitTypeSelect');
+  const help = elements.modalBody.querySelector('#habitTypeHelp');
+  const colorInput = elements.modalBody.querySelector('input[name="cor"]');
+  const colorPreview = elements.modalBody.querySelector('#habitColorPreview');
+
+  const updateTypeHelp = () => {
+    if (!typeSelect || !help) return;
+
+    if (typeSelect.value === 'reduction') {
+      help.innerHTML =
+        '<strong>Reduction:</strong> Marque apenas quando aconteceu. Dias sem marcação contam como clean days.';
+      help.dataset.type = 'reduction';
+      return;
+    }
+
+    help.innerHTML =
+      '<strong>Build:</strong> Marque os dias em que você fez esse hábito.';
+    help.dataset.type = 'build';
+  };
+
+  const updateColorPreview = () => {
+    if (!colorInput || !colorPreview) return;
+    colorPreview.textContent = colorInput.value;
+    colorPreview.style.setProperty('--preview-color', colorInput.value);
+  };
+
+  typeSelect?.addEventListener('change', updateTypeHelp);
+  colorInput?.addEventListener('input', updateColorPreview);
+  updateTypeHelp();
+  updateColorPreview();
 }
 
 function openTaskModal(task = null, defaults = {}) {
@@ -1305,16 +1682,6 @@ async function loadAuthInfo() {
   }
 }
 
-async function logout() {
-  try {
-    await api('/logout', { method: 'POST' });
-  } catch (error) {
-    // Mesmo se a sessão já tiver expirado, volta para o login.
-  } finally {
-    window.location.href = '/login';
-  }
-}
-
 function downloadBackup() {
   window.open('/api/backup', '_blank');
 }
@@ -1325,30 +1692,162 @@ function restoreDatabase(file) {
   openModal({
     title: 'Restaurar banco',
     message:
-      'Isso vai substituir o banco atual. Faça backup antes de continuar.',
+      'Isso vai validar o arquivo, criar backup automático do banco atual e recarregar o SQLite. Use apenas backups confiáveis.',
     confirmText: 'Restaurar',
     confirmClass: 'danger',
     onConfirm: async () => {
+      showToast('Restore iniciado. Validando banco...');
+
       const formData = new FormData();
       formData.append('database', file);
 
       const response = await fetch('/api/sistema/restore', {
         method: 'POST',
+        credentials: 'same-origin',
         body: formData,
       });
 
       const payload = await response.json().catch(() => ({}));
 
       if (!response.ok) {
-        throw new Error(payload.error || 'Erro ao restaurar banco.');
+        throw new Error(
+          payload.details ||
+            payload.error ||
+            'Erro ao restaurar banco. O banco anterior foi preservado.'
+        );
       }
 
-      showToast('Banco restaurado. Recarregando...');
-      window.setTimeout(() => window.location.reload(), 900);
+      showToast(payload.message || 'Restore concluído. Recarregando dados...');
+
+      state.shouldAutoScrollHabitMatrix = true;
+
+      await refreshAll();
+      await loadHealth();
+
+      if (payload.legacyHabitTypeMigration) {
+        showToast('Backup antigo restaurado. Revise Build/Reduction.');
+        showLegacyHabitTypeNotice();
+      } else if (payload.requiresRestart) {
+        showToast('Restore concluído. Reinicie o servidor para carregar o banco restaurado.');
+      } else {
+        showToast('Restore concluído e banco recarregado.');
+      }
+
+      elements.restoreDbInput.value = '';
       return true;
     },
   });
 }
+
+
+
+function shouldSuggestReductionHabit(habit) {
+  const text = `${habit.titulo || ''} ${habit.subtitulo || ''}`.toLowerCase();
+  const terms = [
+    'álcool',
+    'alcool',
+    'lust',
+    'pornografia',
+    'cigarro',
+    'açúcar',
+    'acucar',
+    'redes sociais',
+  ];
+
+  return terms.some((term) => text.includes(term));
+}
+
+async function openHabitTypeReviewModal() {
+  const payload = await api('/habits');
+  const habits = payload.habits || [];
+
+  if (!habits.length) {
+    showToast('Nenhum hábito para revisar.');
+    return;
+  }
+
+  const rows = habits
+    .map((habit) => {
+      const suggested =
+        habit.habit_type === 'reduction' || shouldSuggestReductionHabit(habit)
+          ? 'reduction'
+          : 'build';
+
+      return `
+        <label class="habit-type-review-row">
+          <div>
+            <strong>${escapeHTML(habit.titulo)}</strong>
+            <small>${escapeHTML(habit.subtitulo || '')}</small>
+            ${
+              suggested !== habit.habit_type
+                ? '<em>Sugestão: Reduction</em>'
+                : ''
+            }
+          </div>
+          <select name="habit_type_${habit.id}" data-habit-type-id="${habit.id}">
+            <option value="build" ${suggested === 'build' ? 'selected' : ''}>Build</option>
+            <option value="reduction" ${suggested === 'reduction' ? 'selected' : ''}>Reduction</option>
+          </select>
+        </label>
+      `;
+    })
+    .join('');
+
+  openModal({
+    title: 'Revisar tipos de hábitos',
+    message:
+      'Classifique hábitos antigos como Build ou Reduction sem perder histórico.',
+    confirmText: 'Salvar tipos',
+    confirmClass: 'confirm',
+    body: `
+      <div class="legacy-habit-warning">
+        Este backup pode ter vindo de uma versão antiga sem tipo de hábito. Revise quais hábitos são Build ou Reduction.
+      </div>
+      <div class="habit-type-review-list">
+        ${rows}
+      </div>
+    `,
+    onConfirm: async () => {
+      const updates = Array.from(
+        elements.modalBody.querySelectorAll('[data-habit-type-id]')
+      ).map((select) => ({
+        id: Number(select.dataset.habitTypeId),
+        habit_type: select.value === 'reduction' ? 'reduction' : 'build',
+      }));
+
+      await api('/habits/types', {
+        method: 'PATCH',
+        body: JSON.stringify({ updates }),
+      });
+
+      showToast('Tipos de hábitos atualizados.');
+      state.shouldAutoScrollHabitMatrix = true;
+      await refreshAll();
+      renderCharts();
+      return true;
+    },
+  });
+}
+
+function showLegacyHabitTypeNotice() {
+  openModal({
+    title: 'Revisar tipos de hábitos',
+    message:
+      'Este backup veio de uma versão antiga sem tipo de hábito. Revise quais hábitos são Build ou Reduction.',
+    confirmText: 'Revisar tipos de hábitos',
+    confirmClass: 'confirm',
+    body: `
+      <div class="legacy-habit-warning">
+        Os dados foram carregados e nenhum histórico foi perdido. Como a versão antiga não tinha Build/Reduction, os hábitos entraram como Build por segurança.
+      </div>
+    `,
+    onConfirm: async () => {
+      await openHabitTypeReviewModal();
+      return false;
+    },
+  });
+}
+
 
 async function loadHealth() {
   const payload = await api('/health');
@@ -1365,58 +1864,209 @@ async function loadHealth() {
   `;
 }
 
+function persistLockinState() {
+  localStorage.setItem(
+    'quietProgress.lockin.state',
+    JSON.stringify({
+      initialSeconds: lockinInitialSeconds,
+      remainingSeconds: lockinRemainingSeconds,
+      expectedEndTime: lockinExpectedEndTime,
+      running: lockinRunning,
+      soundEnabled: lockinSoundEnabled,
+    })
+  );
+}
+
+function restoreLockinState() {
+  try {
+    const saved = JSON.parse(
+      localStorage.getItem('quietProgress.lockin.state') || 'null'
+    );
+
+    if (!saved) return;
+
+    lockinInitialSeconds = Number(saved.initialSeconds || 25 * 60);
+    lockinSoundEnabled = saved.soundEnabled !== false;
+
+    if (saved.running && saved.expectedEndTime) {
+      lockinExpectedEndTime = Number(saved.expectedEndTime);
+      lockinRunning = true;
+      lockinRemainingSeconds = Math.max(
+        0,
+        Math.ceil((lockinExpectedEndTime - Date.now()) / 1000)
+      );
+
+      if (lockinRemainingSeconds > 0) {
+        document.body.classList.add('focus-mode');
+        startLockinTicker();
+      } else {
+        finishLockinTimer();
+      }
+    } else {
+      lockinRunning = false;
+      lockinExpectedEndTime = null;
+      lockinRemainingSeconds = Number(saved.remainingSeconds || lockinInitialSeconds);
+    }
+  } catch {
+    lockinInitialSeconds = 25 * 60;
+    lockinRemainingSeconds = lockinInitialSeconds;
+  }
+}
+
 function setLockinDuration(minutes) {
   const safe = Math.min(Math.max(Number(minutes) || 25, 1), 180);
   lockinInitialSeconds = safe * 60;
 
   if (!lockinRunning) {
     lockinRemainingSeconds = lockinInitialSeconds;
+    lockinExpectedEndTime = null;
     renderLockinTimer();
+    persistLockinState();
   }
 }
 
 function renderLockinTimer() {
+  if (lockinRunning && lockinExpectedEndTime) {
+    lockinRemainingSeconds = Math.max(
+      0,
+      Math.ceil((lockinExpectedEndTime - Date.now()) / 1000)
+    );
+  }
+
   const minutes = Math.floor(lockinRemainingSeconds / 60);
   const seconds = lockinRemainingSeconds % 60;
   elements.lockinTime.textContent = `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+
+  if (elements.lockinSoundBtn) {
+    elements.lockinSoundBtn.textContent = lockinSoundEnabled
+      ? 'Sound On'
+      : 'Sound Off';
+  }
+}
+
+function unlockLockinAudio() {
+  if (!lockinSoundEnabled || lockinAudioContext) return;
+
+  const AudioContext = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContext) return;
+
+  lockinAudioContext = new AudioContext();
+
+  if (lockinAudioContext.state === 'suspended') {
+    lockinAudioContext.resume().catch(() => {});
+  }
+}
+
+function playLockinFinishedSound() {
+  if (!lockinSoundEnabled) return;
+
+  try {
+    unlockLockinAudio();
+    if (!lockinAudioContext) return;
+
+    const now = lockinAudioContext.currentTime;
+    const motif = [0, 0.18, 0.36];
+    const repetitions = 3;
+    const repeatGap = 0.85;
+
+    for (let repeat = 0; repeat < repetitions; repeat += 1) {
+      const baseOffset = repeat * repeatGap;
+
+      motif.forEach((offset, index) => {
+        const oscillator = lockinAudioContext.createOscillator();
+        const gain = lockinAudioContext.createGain();
+
+        oscillator.type = 'sine';
+        oscillator.frequency.value = index === 1 ? 740 : 560;
+
+        const startAt = now + baseOffset + offset;
+        const endAt = startAt + 0.16;
+
+        gain.gain.setValueAtTime(0.001, startAt);
+        gain.gain.exponentialRampToValueAtTime(0.22, startAt + 0.015);
+        gain.gain.exponentialRampToValueAtTime(0.001, endAt);
+
+        oscillator.connect(gain);
+        gain.connect(lockinAudioContext.destination);
+
+        oscillator.start(startAt);
+        oscillator.stop(endAt);
+      });
+    }
+  } catch (error) {
+    console.warn('[Pomodoro] Som bloqueado:', error);
+    showToast('Focus block complete. Audio blocked by browser.');
+  }
+}
+
+
+function startLockinTicker() {
+  window.clearInterval(lockinInterval);
+
+  lockinInterval = window.setInterval(() => {
+    renderLockinTimer();
+
+    if (lockinRemainingSeconds <= 0) {
+      finishLockinTimer();
+    }
+  }, 500);
 }
 
 function startLockinTimer() {
+  unlockLockinAudio();
+
   if (lockinRunning) return;
 
   lockinRunning = true;
+  lockinExpectedEndTime = Date.now() + lockinRemainingSeconds * 1000;
   document.body.classList.add('focus-mode');
 
-  lockinInterval = window.setInterval(() => {
-    lockinRemainingSeconds -= 1;
-
-    if (lockinRemainingSeconds <= 0) {
-      pauseLockinTimer();
-      lockinRemainingSeconds = 0;
-      showToast('Lock In concluído.');
-    }
-
-    renderLockinTimer();
-  }, 1000);
+  persistLockinState();
+  startLockinTicker();
+  renderLockinTimer();
 }
 
 function pauseLockinTimer() {
+  renderLockinTimer();
+
   lockinRunning = false;
+  lockinExpectedEndTime = null;
   document.body.classList.remove('focus-mode');
   window.clearInterval(lockinInterval);
   lockinInterval = null;
+  persistLockinState();
 }
 
 function resetLockinTimer() {
-  pauseLockinTimer();
+  lockinRunning = false;
+  lockinExpectedEndTime = null;
   lockinRemainingSeconds = lockinInitialSeconds;
+  document.body.classList.remove('focus-mode');
+  window.clearInterval(lockinInterval);
+  lockinInterval = null;
   renderLockinTimer();
+  persistLockinState();
 }
+
+function finishLockinTimer() {
+  lockinRunning = false;
+  lockinExpectedEndTime = null;
+  lockinRemainingSeconds = 0;
+  document.body.classList.remove('focus-mode');
+  window.clearInterval(lockinInterval);
+  lockinInterval = null;
+  renderLockinTimer();
+  persistLockinState();
+  playLockinFinishedSound();
+  showToast('Focus block complete');
+}
+
 
 function shiftMonth(delta) {
   const [year, month] = state.currentMonth.split('-').map(Number);
   const date = new Date(year, month - 1 + delta, 1);
   state.currentMonth = toISODate(date).slice(0, 7);
+  state.shouldAutoScrollHabitMatrix = true;
   loadDashboard();
 }
 
@@ -1469,6 +2119,7 @@ function attachEvents() {
 
   elements.monthPicker.addEventListener('change', () => {
     state.currentMonth = elements.monthPicker.value || state.currentMonth;
+    state.shouldAutoScrollHabitMatrix = true;
     loadDashboard();
   });
 
@@ -1595,9 +2246,6 @@ function attachEvents() {
 
   elements.backupBtn.addEventListener('click', downloadBackup);
   elements.sidebarBackupBtn.addEventListener('click', downloadBackup);
-  if (elements.logoutBtn) {
-    elements.logoutBtn.addEventListener('click', logout);
-  }
   elements.restoreDbBtn.addEventListener('click', () =>
     elements.restoreDbInput.click()
   );
@@ -1659,11 +2307,22 @@ function attachEvents() {
   elements.lockinStartBtn.addEventListener('click', startLockinTimer);
   elements.lockinPauseBtn.addEventListener('click', pauseLockinTimer);
   elements.lockinResetBtn.addEventListener('click', resetLockinTimer);
+  elements.lockinSoundBtn?.addEventListener('click', () => {
+    lockinSoundEnabled = !lockinSoundEnabled;
+    localStorage.setItem('quietProgress.lockin.sound', String(lockinSoundEnabled));
+    unlockLockinAudio();
+    renderLockinTimer();
+    persistLockinState();
+  });
+
+  document.addEventListener('click', unlockLockinAudio, { once: true });
+  document.addEventListener('touchstart', unlockLockinAudio, { once: true });
 }
 
 async function init() {
   updateTemporalHeader();
   attachEvents();
+  restoreLockinState();
   renderLockinTimer();
 
   elements.monthPicker.value = state.currentMonth;
@@ -1769,6 +2428,8 @@ window.addEventListener('pageshow', async () => {
 */
 document.addEventListener('visibilitychange', async () => {
   if (document.visibilityState !== 'visible') return;
+
+  renderLockinTimer();
 
   const authenticated = await checkAuthStatus();
 
