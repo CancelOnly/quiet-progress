@@ -1,4 +1,4 @@
-const CACHE_VERSION = 'quiet-progress-shell-v7-hotfix-endday-weekly';
+const CACHE_VERSION = 'quiet-progress-shell-v8-reorder-polish';
 const APP_SHELL_ASSETS = [
   '/manifest.json',
   '/styles.css',

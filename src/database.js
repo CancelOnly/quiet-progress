@@ -258,6 +258,26 @@ async function initDatabase() {
   await addColumnIfMissing('habitos', 'ativo', 'INTEGER NOT NULL DEFAULT 1');
   await addColumnIfMissing('habitos', 'cor', 'TEXT DEFAULT NULL');
   await addColumnIfMissing('habitos', 'ordem', 'INTEGER DEFAULT 0');
+
+  // Normalize stable habit order for older databases where every habit has ordem = 0.
+  // Uses id-based order once, without touching already ordered databases.
+  const habitOrderState = await get(`
+    SELECT
+      COUNT(*) AS total,
+      COUNT(DISTINCT COALESCE(ordem, 0)) AS distinctOrder,
+      SUM(CASE WHEN COALESCE(ordem, 0) = 0 THEN 1 ELSE 0 END) AS zeroOrder
+    FROM habitos
+  `).catch(() => null);
+
+  if (
+    habitOrderState &&
+    Number(habitOrderState.total || 0) > 1 &&
+    Number(habitOrderState.distinctOrder || 0) <= 1 &&
+    Number(habitOrderState.zeroOrder || 0) === Number(habitOrderState.total || 0)
+  ) {
+    await run(`UPDATE habitos SET ordem = id * 10 WHERE COALESCE(ordem, 0) = 0`);
+  }
+
   await addColumnIfMissing('habitos', 'data_inicio', 'TEXT DEFAULT NULL');
   await addColumnIfMissing('habitos', 'data_fim', 'TEXT DEFAULT NULL');
   await addColumnIfMissing('habitos', 'archived_at', 'TEXT DEFAULT NULL');

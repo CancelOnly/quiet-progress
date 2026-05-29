@@ -601,3 +601,56 @@ Depois:
 npm run pm2:restart
 npm run pm2:logs
 ```
+
+
+## v1.3.3 — Manual Habit Reorder
+
+Esta versão adiciona reordenação manual de hábitos.
+
+### Como usar
+
+Desktop:
+
+```text
+Tracker → Habit Matrix → arrastar pelo ícone ☰ ao lado do nome do hábito
+```
+
+Mobile:
+
+```text
+Tracker → Habit Matrix → usar botões ↑ ↓ na linha do hábito
+```
+
+### Persistência
+
+A ordem é salva em:
+
+```text
+habitos.ordem
+```
+
+Endpoint:
+
+```text
+PATCH /api/habits/reorder
+```
+
+Body:
+
+```json
+{
+  "orderedIds": [3, 1, 5, 2]
+}
+```
+
+### Regras
+
+```text
+Não altera habit_type
+Não altera logs
+Não altera ativo/archived_at
+Não apaga dados
+Não muda cálculo de streaks/scores
+```
+
+Listas operacionais seguem a ordem manual. Rankings/top streaks podem continuar ordenados por desempenho.

@@ -11,6 +11,12 @@ const state = {
   stats: null,
   health: null,
   shouldAutoScrollHabitMatrix: true,
+  habitReorder: {
+    draggedId: null,
+    overId: null,
+    previousIds: [],
+    saving: false,
+  },
 };
 
 const charts = {
@@ -650,6 +656,184 @@ function renderTracker() {
   renderTrackerCheckin();
 }
 
+function getCurrentHabitOrderIds() {
+  return (state.dashboard?.habits || []).map((habit) => Number(habit.id));
+}
+
+function setHabitRowDragState(habitId, className, enabled) {
+  if (!elements.habitMatrix) return;
+
+  elements.habitMatrix
+    .querySelectorAll(`[data-habit-row="${habitId}"], [data-reorder-habit-id="${habitId}"]`)
+    .forEach((node) => node.classList.toggle(className, enabled));
+}
+
+function clearHabitReorderVisualState() {
+  if (!elements.habitMatrix) return;
+
+  elements.habitMatrix
+    .querySelectorAll('.is-dragging-row, .is-drag-over-row')
+    .forEach((node) =>
+      node.classList.remove('is-dragging-row', 'is-drag-over-row')
+    );
+}
+
+function reorderHabitArray(fromId, toId) {
+  const habits = state.dashboard?.habits || [];
+  const fromIndex = habits.findIndex((habit) => Number(habit.id) === Number(fromId));
+  const toIndex = habits.findIndex((habit) => Number(habit.id) === Number(toId));
+
+  if (fromIndex < 0 || toIndex < 0 || fromIndex === toIndex) return false;
+
+  const next = habits.slice();
+  const [moved] = next.splice(fromIndex, 1);
+  next.splice(toIndex, 0, moved);
+
+  state.dashboard.habits = next.map((habit, index) => ({
+    ...habit,
+    ordem: (index + 1) * 10,
+  }));
+
+  return true;
+}
+
+async function saveHabitOrder(orderedIds, previousIds = null) {
+  state.habitReorder.saving = true;
+
+  try {
+    await api('/habits/reorder', {
+      method: 'PATCH',
+      body: JSON.stringify({ orderedIds }),
+    });
+
+    showToast('Ordem dos hábitos salva.');
+    await refreshAll();
+  } catch (error) {
+    if (previousIds?.length && state.dashboard?.habits?.length) {
+      const previousIndex = new Map(
+        previousIds.map((id, index) => [Number(id), index])
+      );
+
+      state.dashboard.habits = state.dashboard.habits
+        .slice()
+        .sort(
+          (a, b) =>
+            (previousIndex.get(Number(a.id)) ?? 99999) -
+            (previousIndex.get(Number(b.id)) ?? 99999)
+        );
+
+      renderTracker();
+      renderOverview();
+      renderCharts();
+    }
+
+    showToast('Não foi possível salvar a nova ordem.');
+    console.error('[Habit reorder] Falha:', error);
+  } finally {
+    state.habitReorder.saving = false;
+  }
+}
+
+async function moveHabitByStep(id, direction) {
+  if (!state.dashboard?.habits?.length || state.habitReorder.saving) return;
+
+  const previousIds = getCurrentHabitOrderIds();
+  const habits = state.dashboard.habits.slice();
+  const index = habits.findIndex((habit) => Number(habit.id) === Number(id));
+  const nextIndex = index + direction;
+
+  if (index < 0 || nextIndex < 0 || nextIndex >= habits.length) return;
+
+  const [moved] = habits.splice(index, 1);
+  habits.splice(nextIndex, 0, moved);
+
+  state.dashboard.habits = habits.map((habit, position) => ({
+    ...habit,
+    ordem: (position + 1) * 10,
+  }));
+
+  state.shouldAutoScrollHabitMatrix = false;
+  renderTracker();
+  await saveHabitOrder(getCurrentHabitOrderIds(), previousIds);
+}
+
+function handleHabitDragStart(event) {
+  const handle = event.target.closest('[data-drag-habit-id]');
+  if (!handle || !state.dashboard?.habits?.length) return;
+
+  const id = Number(handle.dataset.dragHabitId);
+  state.habitReorder.draggedId = id;
+  state.habitReorder.overId = null;
+  state.habitReorder.previousIds = getCurrentHabitOrderIds();
+
+  event.dataTransfer.effectAllowed = 'move';
+  event.dataTransfer.setData('text/plain', String(id));
+
+  window.requestAnimationFrame(() => {
+    setHabitRowDragState(id, 'is-dragging-row', true);
+  });
+}
+
+function handleHabitDragOver(event) {
+  const target = event.target.closest('[data-reorder-habit-id]');
+  const draggedId = state.habitReorder.draggedId;
+
+  if (!target || !draggedId) return;
+
+  event.preventDefault();
+  event.dataTransfer.dropEffect = 'move';
+
+  const targetId = Number(target.dataset.reorderHabitId);
+
+  if (targetId === state.habitReorder.overId) return;
+
+  if (state.habitReorder.overId) {
+    setHabitRowDragState(state.habitReorder.overId, 'is-drag-over-row', false);
+  }
+
+  state.habitReorder.overId = targetId;
+
+  if (targetId !== draggedId) {
+    setHabitRowDragState(targetId, 'is-drag-over-row', true);
+  }
+}
+
+async function handleHabitDrop(event) {
+  const target = event.target.closest('[data-reorder-habit-id]');
+  const draggedId = state.habitReorder.draggedId;
+
+  if (!target || !draggedId || state.habitReorder.saving) return;
+
+  event.preventDefault();
+
+  const targetId = Number(target.dataset.reorderHabitId);
+  const previousIds = state.habitReorder.previousIds.slice();
+
+  clearHabitReorderVisualState();
+
+  state.habitReorder.draggedId = null;
+  state.habitReorder.overId = null;
+  state.habitReorder.previousIds = [];
+
+  if (targetId === draggedId) return;
+
+  const changed = reorderHabitArray(draggedId, targetId);
+  if (!changed) return;
+
+  state.shouldAutoScrollHabitMatrix = false;
+  renderTracker();
+  await saveHabitOrder(getCurrentHabitOrderIds(), previousIds);
+}
+
+function handleHabitDragEnd() {
+  clearHabitReorderVisualState();
+
+  state.habitReorder.draggedId = null;
+  state.habitReorder.overId = null;
+  state.habitReorder.previousIds = [];
+}
+
+
 function renderHabitMatrix() {
   if (!state.dashboard) return;
 
@@ -712,13 +896,28 @@ function renderHabitMatrix() {
       const typeLabel = habitType === 'reduction' ? 'REDUCTION' : 'BUILD';
 
       const habitInfo = `
-        <div class="qpmatrix-habit habit-info ${habitType}" style="grid-column: 1; grid-row: ${row};">
+        <div
+          class="qpmatrix-habit habit-info ${habitType}"
+          style="grid-column: 1; grid-row: ${row};"
+          data-reorder-habit-id="${habit.id}"
+          data-habit-row="${habit.id}"
+        >
           <div class="habit-title-row">
+            <button
+              class="habit-drag-handle"
+              type="button"
+              draggable="true"
+              data-drag-habit-id="${habit.id}"
+              title="Arraste pelo ícone para reordenar."
+              aria-label="Arraste para reordenar ${escapeHTML(habit.titulo)}"
+            ><span aria-hidden="true">⋮⋮</span></button>
             <strong>${escapeHTML(habit.titulo)}</strong>
             <span class="habit-type-badge ${habitType}">${typeLabel}</span>
           </div>
           <small>${escapeHTML(habit.subtitulo || '')}</small>
           <div class="habit-row-actions">
+            <button class="row-link move-habit-up" type="button" data-habit-id="${habit.id}" title="Mover para cima" aria-label="Mover ${escapeHTML(habit.titulo)} para cima">↑</button>
+            <button class="row-link move-habit-down" type="button" data-habit-id="${habit.id}" title="Mover para baixo" aria-label="Mover ${escapeHTML(habit.titulo)} para baixo">↓</button>
             <button class="row-link edit-habit-inline" type="button" data-habit-id="${habit.id}">Editar</button>
             <button class="row-link archive-habit-inline" type="button" data-habit-id="${habit.id}">Arquivar</button>
             <button class="row-link danger delete-habit-inline" type="button" data-habit-id="${habit.id}">Excluir</button>
@@ -750,6 +949,7 @@ function renderHabitMatrix() {
               class="qpmatrix-check habit-check-cell ${habitType} ${checked ? 'done is-done' : ''} ${isToday ? 'is-today' : ''} ${isSelected ? 'is-selected' : ''} ${isFuture ? 'is-future' : ''} ${disabled ? 'disabled' : ''}"
               type="button"
               data-habit-id="${habit.id}"
+              data-habit-row="${habit.id}"
               data-date="${day.date}"
               style="grid-column: ${dayIndex + 2}; grid-row: ${row};"
               title="${escapeHTML(tooltip)}"
@@ -807,12 +1007,16 @@ function renderHabitProgressList() {
   if (!state.dashboard) return;
 
   const stats = state.dashboard.stats.habitStats || [];
+  const byManualOrder = (a, b) =>
+    Number(a.ordem || 0) - Number(b.ordem || 0) ||
+    Number(a.habit_id || 0) - Number(b.habit_id || 0);
+
   const buildStats = stats
     .filter((item) => item.habit_type !== 'reduction')
-    .sort((a, b) => b.percent - a.percent);
+    .sort(byManualOrder);
   const reductionStats = stats
     .filter((item) => item.habit_type === 'reduction')
-    .sort((a, b) => b.percent - a.percent);
+    .sort(byManualOrder);
 
   const renderItem = (item) => {
     const isReduction = item.habit_type === 'reduction';
@@ -1213,12 +1417,16 @@ function renderHabitBar() {
   destroyChart('habitBar');
 
   const rawSeries = state.stats.habitStats || [];
+  const byManualOrder = (a, b) =>
+    Number(a.ordem || 0) - Number(b.ordem || 0) ||
+    Number(a.habit_id || 0) - Number(b.habit_id || 0);
+
   const buildSeries = rawSeries
     .filter((item) => item.habit_type !== 'reduction')
-    .sort((a, b) => b.percent - a.percent);
+    .sort(byManualOrder);
   const reductionSeries = rawSeries
     .filter((item) => item.habit_type === 'reduction')
-    .sort((a, b) => b.percent - a.percent);
+    .sort(byManualOrder);
   const series = [...buildSeries, ...reductionSeries];
 
   charts.habitBar = new Chart(elements.habitBarChart.getContext('2d'), {
@@ -2430,8 +2638,20 @@ function attachEvents() {
       return;
     }
 
+    const moveUpButton = event.target.closest('.move-habit-up');
+    const moveDownButton = event.target.closest('.move-habit-down');
     const editHabitBtn = event.target.closest('.edit-habit-inline');
     const archiveHabitButton = event.target.closest('.archive-habit-inline');
+
+    if (moveUpButton) {
+      await moveHabitByStep(Number(moveUpButton.dataset.habitId), -1);
+      return;
+    }
+
+    if (moveDownButton) {
+      await moveHabitByStep(Number(moveDownButton.dataset.habitId), 1);
+      return;
+    }
 
     if (archiveHabitButton) {
       archiveHabit(Number(archiveHabitButton.dataset.habitId));
@@ -2448,6 +2668,11 @@ function attachEvents() {
       deleteHabit(deleteHabitBtn.dataset.habitId);
     }
   });
+
+  elements.habitMatrix.addEventListener('dragstart', handleHabitDragStart);
+  elements.habitMatrix.addEventListener('dragover', handleHabitDragOver);
+  elements.habitMatrix.addEventListener('drop', handleHabitDrop);
+  elements.habitMatrix.addEventListener('dragend', handleHabitDragEnd);
 
   document.addEventListener('click', async (event) => {
     const taskToggle = event.target.closest('.task-toggle');

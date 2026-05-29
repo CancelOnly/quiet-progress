@@ -4914,3 +4914,130 @@ body.focus-mode .lockin-time {
     grid-column: 1 / -1;
   }
 }
+
+
+
+/* ==========================================================================
+   V1.3.4 — MANUAL HABIT REORDER POLISH
+   ========================================================================== */
+
+/*
+  O handle fica dentro do card do hábito, mas não cria uma coluna visual pesada.
+  Desktop usa drag pelo ⋮⋮.
+  Mobile mantém ↑ ↓, porque drag dentro de grid horizontal é ruim para toque.
+*/
+
+.qpmatrix-habit .habit-title-row {
+  position: relative;
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 7px;
+}
+
+.habit-drag-handle {
+  width: 14px;
+  height: 22px;
+  min-width: 14px;
+  display: inline-grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  color: var(--muted-2);
+  background: transparent;
+  box-shadow: none;
+  font-size: 12px;
+  font-weight: 950;
+  line-height: 0.75;
+  letter-spacing: -0.26em;
+  opacity: 0.22;
+  cursor: grab;
+  touch-action: none;
+  transform: translateY(-1px);
+  transition:
+    opacity 140ms ease,
+    color 140ms ease,
+    background 140ms ease,
+    transform 140ms ease;
+}
+
+.habit-drag-handle span {
+  display: block;
+  transform: rotate(0deg);
+  pointer-events: none;
+}
+
+.qpmatrix-habit:hover .habit-drag-handle,
+.qpmatrix-habit:focus-within .habit-drag-handle {
+  opacity: 0.72;
+}
+
+.habit-drag-handle:hover {
+  color: var(--success);
+  background: rgba(222, 255, 154, 0.045);
+  box-shadow: none;
+  transform: translateY(-1px) scale(1.02);
+}
+
+.habit-drag-handle:active,
+.habit-drag-handle.is-grabbing {
+  cursor: grabbing;
+  opacity: 0.95;
+}
+
+.qpmatrix-habit.is-dragging-row {
+  opacity: 0.54;
+  filter: saturate(0.82);
+}
+
+.habit-check-cell.is-dragging-row {
+  opacity: 0.44;
+}
+
+.qpmatrix-habit.is-drag-over-row {
+  background: rgba(17, 202, 160, 0.055);
+  box-shadow:
+    inset 2px 0 0 rgba(17, 202, 160, 0.72),
+    inset 0 0 0 1px rgba(17, 202, 160, 0.13);
+  transform: none;
+}
+
+.habit-check-cell.is-drag-over-row {
+  background: rgba(17, 202, 160, 0.055);
+  box-shadow:
+    inset 0 0 0 1px rgba(17, 202, 160, 0.22),
+    0 0 10px rgba(17, 202, 160, 0.07);
+}
+
+.move-habit-up,
+.move-habit-down {
+  display: none;
+}
+
+.habit-row-actions .move-habit-up,
+.habit-row-actions .move-habit-down {
+  min-width: 24px;
+  padding-inline: 7px;
+}
+
+@media (max-width: 768px) {
+  .qpmatrix-habit .habit-title-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .habit-drag-handle {
+    display: none;
+  }
+
+  .move-habit-up,
+  .move-habit-down {
+    display: inline-flex;
+  }
+}
+
+@media (min-width: 769px) {
+  .habit-title-row {
+    align-items: center;
+  }
+}
