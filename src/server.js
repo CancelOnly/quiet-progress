@@ -79,9 +79,11 @@ if (
 const PUBLIC_DIR = path.join(__dirname, '..', 'public');
 const UPLOAD_DIR = path.join(__dirname, '..', 'uploads');
 const BACKUP_DIR = path.join(__dirname, '..', 'backups');
+const AUTO_BACKUP_DIR = path.join(BACKUP_DIR, 'auto');
 
 fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 fs.mkdirSync(BACKUP_DIR, { recursive: true });
+fs.mkdirSync(AUTO_BACKUP_DIR, { recursive: true });
 
 const upload = multer({
   dest: UPLOAD_DIR,
@@ -279,7 +281,7 @@ app.use(
         styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
         fontSrc: ["'self'", 'https://fonts.gstatic.com'],
         imgSrc: ["'self'", 'data:'],
-        connectSrc: ["'self'"],
+        connectSrc: ["'self'", 'https://cdn.jsdelivr.net'],
         workerSrc: ["'self'"],
         manifestSrc: ["'self'"],
 
@@ -1019,6 +1021,10 @@ function getMonthWeeks(monthValue) {
   }));
 }
 
+function getWeekStartISO(dateISO) {
+  return addDaysISO(normalizeDate(dateISO), -getWeekdayIndexMondayFirst(normalizeDate(dateISO)));
+}
+
 function getWeekForDate(dateISO) {
   const start = addDaysISO(dateISO, -getWeekdayIndexMondayFirst(dateISO));
   const days = Array.from({ length: 7 }, (_, index) => {
@@ -1067,7 +1073,7 @@ async function getHabitsForRange(start, end, includeInactiveWithLogs = true) {
       LEFT JOIN habitos_log l
         ON l.habito_id = h.id
         AND l.data_ref BETWEEN ? AND ?
-      WHERE h.ativo = 1
+      WHERE (h.ativo = 1 AND h.archived_at IS NULL)
          OR l.id IS NOT NULL
       ORDER BY h.ordem ASC, h.id ASC
       `,
@@ -1080,6 +1086,7 @@ async function getHabitsForRange(start, end, includeInactiveWithLogs = true) {
     SELECT *
     FROM habitos
     WHERE ativo = 1
+      AND archived_at IS NULL
     ORDER BY ordem ASC, id ASC
     `
   );
@@ -1091,6 +1098,7 @@ async function getActiveHabitsForDate(date) {
     SELECT *
     FROM habitos
     WHERE ativo = 1
+      AND archived_at IS NULL
       AND (data_inicio IS NULL OR data_inicio <= ?)
       AND (data_fim IS NULL OR data_fim >= ?)
     ORDER BY ordem ASC, id ASC
@@ -1320,6 +1328,7 @@ async function getDayPayload(date, options = {}) {
         ordem: Number(habit.ordem || 0),
         data_inicio: habit.data_inicio,
         data_fim: habit.data_fim,
+        archived_at: habit.archived_at,
         habit_type: habitType,
         disabledForDate: !dateIsWithinHabit(habit, date),
         concluido: checked,
@@ -1873,6 +1882,7 @@ app.get('/api/habits', async (request, response) => {
         suggested_habit_type: suggestHabitType(habit),
         data_inicio: habit.data_inicio,
         data_fim: habit.data_fim,
+        archived_at: habit.archived_at,
       })),
     });
   } catch (error) {
@@ -2061,10 +2071,10 @@ app.delete('/api/habits/:id', async (request, response) => {
     await run(
       `
       UPDATE habitos
-      SET ativo = 0, updated_at = ?
+      SET ativo = 0, archived_at = ?, updated_at = ?
       WHERE id = ?
       `,
-      [nowISO(), request.params.id]
+      [nowISO(), nowISO(), request.params.id]
     );
 
     response.json({
@@ -2428,6 +2438,242 @@ app.get('/api/day/:date/markdown', async (request, response) => {
 });
 
 
+
+app.get('/api/day/:date/end-day', async (request, response) => {
+  try {
+    const date = normalizeDate(request.params.date);
+    const closure = await get(
+      `
+      SELECT *
+      FROM day_closures
+      WHERE data_ref = ?
+      `,
+      [date]
+    );
+
+    const markdown = closure?.markdown || (await buildEndDayMarkdown(date));
+
+    response.json({
+      ok: true,
+      date,
+      closed: Boolean(closure?.closed_at),
+      closure: closure || null,
+      markdown,
+    });
+  } catch (error) {
+    console.error(error);
+    response.status(500).json({ error: 'Erro ao carregar fechamento do dia.' });
+  }
+});
+
+app.post('/api/day/:date/end-day', async (request, response) => {
+  try {
+    const date = normalizeDate(request.params.date);
+    const markdown = await buildEndDayMarkdown(date);
+    const now = nowISO();
+    const summary = String(request.body?.summary || '').trim();
+
+    await run(
+      `
+      INSERT INTO day_closures (data_ref, summary, markdown, closed_at, updated_at)
+      VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(data_ref)
+      DO UPDATE SET
+        summary = excluded.summary,
+        markdown = excluded.markdown,
+        closed_at = excluded.closed_at,
+        updated_at = excluded.updated_at
+      `,
+      [date, summary, markdown, now, now]
+    );
+
+    response.json({
+      ok: true,
+      date,
+      closed_at: now,
+      markdown,
+    });
+  } catch (error) {
+    console.error(error);
+    response.status(500).json({ error: 'Erro ao fechar dia.' });
+  }
+});
+
+app.get('/api/week/:date/review', async (request, response) => {
+  try {
+    const date = normalizeDate(request.params.date);
+    const weekStart = getWeekStartISO(date);
+    const weekEnd = addDaysISO(weekStart, 6);
+    const markdown = await buildWeeklyReviewMarkdown(weekStart);
+
+    response.json({
+      ok: true,
+      weekStart,
+      weekEnd,
+      markdown,
+    });
+  } catch (error) {
+    console.error(error);
+    response.status(500).json({ error: 'Erro ao gerar Weekly Review.' });
+  }
+});
+
+app.post('/api/focus-sessions', async (request, response) => {
+  try {
+    const dataRef = normalizeDate(request.body?.data_ref || todayISO());
+    const duration = clampNumber(request.body?.duration_minutes, 1, 720, 25);
+    const startedAt = request.body?.started_at || nowISO();
+    const endedAt = request.body?.ended_at || nowISO();
+    const label = String(request.body?.label || 'Pomodoro').trim() || 'Pomodoro';
+    const shouldMarkFocusHabit = request.body?.mark_focus_habit === true;
+    const now = nowISO();
+
+    const result = await run(
+      `
+      INSERT INTO focus_sessions (data_ref, started_at, ended_at, duration_minutes, completed, label, created_at)
+      VALUES (?, ?, ?, ?, 1, ?, ?)
+      `,
+      [dataRef, startedAt, endedAt, duration, label, now]
+    );
+
+    let focusHabit = { marked: false };
+
+    if (shouldMarkFocusHabit) {
+      focusHabit = await maybeMarkFocusHabit(dataRef);
+    }
+
+    response.status(201).json({
+      ok: true,
+      session: {
+        id: result.id,
+        data_ref: dataRef,
+        started_at: startedAt,
+        ended_at: endedAt,
+        duration_minutes: duration,
+        completed: true,
+        label,
+      },
+      focusHabit,
+    });
+  } catch (error) {
+    console.error(error);
+    response.status(500).json({ error: 'Erro ao registrar sessão de foco.' });
+  }
+});
+
+app.get('/api/focus-sessions/:date/summary', async (request, response) => {
+  try {
+    const date = normalizeDate(request.params.date);
+    response.json({
+      ok: true,
+      date,
+      focus: await getFocusSummary(date),
+    });
+  } catch (error) {
+    console.error(error);
+    response.status(500).json({ error: 'Erro ao carregar foco.' });
+  }
+});
+
+app.post('/api/backup/auto/run', async (request, response) => {
+  try {
+    const result = await ensureDailyAutoBackup(true);
+    response.json(result);
+  } catch (error) {
+    console.error(error);
+    response.status(500).json({ error: 'Erro ao criar backup automático.' });
+  }
+});
+
+app.get('/api/backup/status', async (request, response) => {
+  try {
+    const doctor = await buildDataDoctor();
+
+    response.json({
+      ok: true,
+      dbPath: DB_PATH,
+      db: doctor.db,
+      backups: doctor.backups,
+    });
+  } catch (error) {
+    console.error(error);
+    response.status(500).json({ error: 'Erro ao carregar status de backup.' });
+  }
+});
+
+app.get('/api/health/data', async (request, response) => {
+  try {
+    response.json(await buildDataDoctor());
+  } catch (error) {
+    console.error(error);
+    response.status(500).json({ error: 'Erro ao diagnosticar dados.' });
+  }
+});
+
+app.patch('/api/habits/:id/archive', async (request, response) => {
+  try {
+    const current = await get(`SELECT * FROM habitos WHERE id = ?`, [
+      request.params.id,
+    ]);
+
+    if (!current) {
+      return response.status(404).json({ error: 'Hábito não encontrado.' });
+    }
+
+    const archive = request.body?.archive !== false;
+    const archivedAt = archive ? nowISO() : null;
+
+    await run(
+      `
+      UPDATE habitos
+      SET ativo = ?, archived_at = ?, updated_at = ?
+      WHERE id = ?
+      `,
+      [archive ? 0 : 1, archivedAt, nowISO(), request.params.id]
+    );
+
+    response.json({
+      ok: true,
+      id: Number(request.params.id),
+      archived: archive,
+      archived_at: archivedAt,
+    });
+  } catch (error) {
+    console.error(error);
+    response.status(500).json({ error: 'Erro ao arquivar/restaurar hábito.' });
+  }
+});
+
+app.get('/api/habits/archived', async (request, response) => {
+  try {
+    const habits = await all(
+      `
+      SELECT *
+      FROM habitos
+      WHERE archived_at IS NOT NULL
+         OR ativo = 0
+      ORDER BY archived_at DESC, id DESC
+      `
+    );
+
+    response.json({
+      ok: true,
+      habits: habits.map((habit) => ({
+        id: habit.id,
+        titulo: habit.titulo,
+        subtitulo: habit.subtitulo || '',
+        habit_type: normalizeHabitType(habit.habit_type),
+        archived_at: habit.archived_at,
+        ativo: Number(habit.ativo) === 1,
+      })),
+    });
+  } catch (error) {
+    console.error(error);
+    response.status(500).json({ error: 'Erro ao carregar hábitos arquivados.' });
+  }
+});
+
+
 function openTempSQLite(filePath, mode = sqlite3.OPEN_READONLY) {
   return new Promise((resolve, reject) => {
     const tempDb = new sqlite3.Database(filePath, mode, (error) => {
@@ -2537,31 +2783,7 @@ async function checkpointDatabase() {
 }
 
 async function copyCurrentDatabaseBackup(reason = 'manual') {
-  if (!fs.existsSync(DB_PATH)) {
-    throw new Error(`Banco ativo não encontrado em DB_PATH: ${DB_PATH}`);
-  }
-
-  await checkpointDatabase();
-
-  const activeValidation = await validateSQLiteBackupFile(DB_PATH);
-
-  if (!activeValidation.tables.length) {
-    throw new Error(
-      'Backup inválido: o banco de origem não contém tabelas. Verifique DB_PATH.'
-    );
-  }
-
-  const safeReason = String(reason).replace(/[^a-z0-9_-]/gi, '_');
-  const backupPath = path.join(
-    BACKUP_DIR,
-    `quiet_progress_${safeReason}_${new Date().toISOString().replace(/[:.]/g, '-')}.db`
-  );
-
-  fs.copyFileSync(DB_PATH, backupPath);
-
-  await validateSQLiteBackupFile(backupPath);
-
-  return backupPath;
+  return (await createValidatedBackup(reason, { auto: false })).path;
 }
 
 function removeSQLiteSidecars(dbPath) {
@@ -2571,6 +2793,450 @@ function removeSQLiteSidecars(dbPath) {
     }
   });
 }
+
+
+async function getSettingsMap() {
+  const rows = await all(`SELECT key, value FROM app_settings`).catch(() => []);
+  return Object.fromEntries(rows.map((row) => [row.key, row.value]));
+}
+
+async function setSettingValue(key, value) {
+  await run(
+    `
+    INSERT INTO app_settings (key, value, updated_at)
+    VALUES (?, ?, ?)
+    ON CONFLICT(key)
+    DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+    `,
+    [key, String(value), nowISO()]
+  );
+}
+
+function listBackupFiles(dir) {
+  if (!fs.existsSync(dir)) return [];
+
+  return fs
+    .readdirSync(dir)
+    .filter((name) => name.endsWith('.db'))
+    .map((name) => {
+      const filePath = path.join(dir, name);
+      const stat = fs.statSync(filePath);
+
+      return {
+        name,
+        path: filePath,
+        size: stat.size,
+        createdAt: stat.birthtime.toISOString(),
+        modifiedAt: stat.mtime.toISOString(),
+      };
+    })
+    .sort((a, b) => b.modifiedAt.localeCompare(a.modifiedAt));
+}
+
+async function createValidatedBackup(reason = 'manual', options = {}) {
+  if (!fs.existsSync(DB_PATH)) {
+    throw new Error(`Banco ativo não encontrado em DB_PATH: ${DB_PATH}`);
+  }
+
+  await checkpointDatabase();
+  await validateSQLiteBackupFile(DB_PATH);
+
+  const targetDir = options.auto ? AUTO_BACKUP_DIR : BACKUP_DIR;
+  fs.mkdirSync(targetDir, { recursive: true });
+
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const prefix = options.auto ? 'quiet_progress_auto' : `quiet_progress_${reason}`;
+  const backupPath = path.join(targetDir, `${prefix}_${timestamp}.db`);
+
+  fs.copyFileSync(DB_PATH, backupPath);
+  const validation = await validateSQLiteBackupFile(backupPath);
+
+  return {
+    path: backupPath,
+    name: path.basename(backupPath),
+    size: fs.statSync(backupPath).size,
+    validation,
+    createdAt: nowISO(),
+  };
+}
+
+function pruneAutoBackups(maxItems = 30) {
+  const files = listBackupFiles(AUTO_BACKUP_DIR);
+
+  files.slice(maxItems).forEach((file) => {
+    try {
+      fs.rmSync(file.path, { force: true });
+    } catch (error) {
+      console.warn('[Backup] Falha ao remover backup antigo:', error.message);
+    }
+  });
+}
+
+async function ensureDailyAutoBackup(force = false) {
+  const settings = await getSettingsMap();
+  const enabled = settings.auto_backup_enabled !== 'false';
+
+  if (!enabled && !force) {
+    return {
+      ok: true,
+      skipped: true,
+      reason: 'auto_backup_disabled',
+    };
+  }
+
+  const today = todayISO();
+  const files = listBackupFiles(AUTO_BACKUP_DIR);
+  const hasToday = files.some((file) => file.name.includes(today));
+
+  if (hasToday && !force) {
+    return {
+      ok: true,
+      skipped: true,
+      reason: 'already_created_today',
+      latest: files[0] || null,
+    };
+  }
+
+  try {
+    const backup = await createValidatedBackup('auto', { auto: true });
+    pruneAutoBackups(Number(settings.auto_backup_retention_days || 30));
+
+    await setSettingValue('last_auto_backup_at', nowISO());
+    await setSettingValue('last_auto_backup_file', backup.name);
+    await setSettingValue('last_auto_backup_error', '');
+
+    console.log('[Backup] Auto backup criado:', backup.name);
+
+    return {
+      ok: true,
+      skipped: false,
+      backup,
+    };
+  } catch (error) {
+    await setSettingValue('last_auto_backup_error', error.message);
+    console.error('[Backup] Auto backup falhou:', error);
+
+    return {
+      ok: false,
+      skipped: false,
+      error: error.message,
+    };
+  }
+}
+
+function getDbFileInfo() {
+  const exists = fs.existsSync(DB_PATH);
+  const walPath = `${DB_PATH}-wal`;
+  const shmPath = `${DB_PATH}-shm`;
+
+  return {
+    path: DB_PATH,
+    exists,
+    size: exists ? fs.statSync(DB_PATH).size : 0,
+    walExists: fs.existsSync(walPath),
+    walSize: fs.existsSync(walPath) ? fs.statSync(walPath).size : 0,
+    shmExists: fs.existsSync(shmPath),
+    shmSize: fs.existsSync(shmPath) ? fs.statSync(shmPath).size : 0,
+  };
+}
+
+async function buildDataDoctor() {
+  const warnings = [];
+  const errors = [];
+  let integrity = 'unknown';
+  let tables = [];
+  let columns = {};
+  const counts = {};
+  const dbInfo = getDbFileInfo();
+
+  if (!dbInfo.exists) {
+    errors.push('DB_PATH não encontrado.');
+  } else {
+    try {
+      const validation = await validateSQLiteBackupFile(DB_PATH, {
+        requireAppTables: false,
+      });
+      integrity = 'ok';
+      tables = validation.tables;
+    } catch (error) {
+      integrity = 'error';
+      errors.push(error.message);
+    }
+  }
+
+  for (const table of [
+    'habitos',
+    'habitos_log',
+    'tarefas',
+    'mindset',
+    'reminders',
+    'push_subscriptions',
+    'day_closures',
+    'focus_sessions',
+  ]) {
+    try {
+      const row = await get(`SELECT COUNT(*) AS total FROM ${table}`);
+      counts[table] = Number(row?.total || 0);
+    } catch {
+      counts[table] = null;
+    }
+
+    try {
+      const rows = await all(`PRAGMA table_info(${table})`);
+      columns[table] = rows.map((row) => row.name);
+    } catch {
+      columns[table] = [];
+    }
+  }
+
+  if (!tables.length && dbInfo.exists) warnings.push('Banco com 0 tabelas.');
+  if (!columns.habitos?.includes('habit_type')) warnings.push('Banco sem habit_type: backup antigo.');
+  if (!columns.habitos?.includes('data_inicio')) warnings.push('Banco sem data_inicio.');
+  if (!columns.habitos?.includes('data_fim')) warnings.push('Banco sem data_fim.');
+  if (counts.habitos === 0) warnings.push('Nenhum hábito cadastrado.');
+
+  const settings = await getSettingsMap();
+  const autoFiles = listBackupFiles(AUTO_BACKUP_DIR);
+  const manualFiles = listBackupFiles(BACKUP_DIR).filter(
+    (file) => !file.path.startsWith(AUTO_BACKUP_DIR)
+  );
+
+  if (settings.last_auto_backup_error) {
+    warnings.push(`Backup automático falhou: ${settings.last_auto_backup_error}`);
+  }
+
+  const status = errors.length ? 'error' : warnings.length ? 'warning' : 'ok';
+
+  return {
+    status,
+    db: dbInfo,
+    integrity,
+    tables,
+    columns,
+    counts,
+    backups: {
+      latestManual: manualFiles[0] || null,
+      latestAuto: autoFiles[0] || null,
+      autoCount: autoFiles.length,
+      lastAutoBackupAt: settings.last_auto_backup_at || null,
+      lastAutoBackupError: settings.last_auto_backup_error || '',
+    },
+    warnings,
+    errors,
+  };
+}
+
+async function getFocusSummary(date) {
+  const row = await get(
+    `
+    SELECT COUNT(*) AS completed, COALESCE(SUM(duration_minutes), 0) AS minutes
+    FROM focus_sessions
+    WHERE data_ref = ?
+      AND completed = 1
+    `,
+    [date]
+  ).catch(() => ({ completed: 0, minutes: 0 }));
+
+  return {
+    completed: Number(row?.completed || 0),
+    minutes: Number(row?.minutes || 0),
+  };
+}
+
+async function buildEndDayMarkdown(date) {
+  const day = await getDayPayload(date, { includeInactiveWithLogs: true });
+  const focus = await getFocusSummary(date);
+
+  const buildHabits = day.habits.filter((habit) => habit.habit_type === 'build');
+  const reductionHabits = day.habits.filter(
+    (habit) => habit.habit_type === 'reduction'
+  );
+
+  const buildLines = buildHabits.length
+    ? buildHabits
+        .map((habit) => `- [${habit.concluido ? 'x' : ' '}] ${habit.titulo}`)
+        .join('\n')
+    : '- Nenhum hábito Build.';
+
+  const reductionLines = reductionHabits.length
+    ? reductionHabits
+        .map(
+          (habit) =>
+            `- [${habit.concluido ? 'x' : ' '}] ${habit.titulo} — ${habit.concluido ? 'occurrence' : 'clean day'}`
+        )
+        .join('\n')
+    : '- Nenhum hábito Reduction.';
+
+  const taskLines = day.tasks.length
+    ? day.tasks.map(markdownTaskLine).join('\n')
+    : '- Nenhuma tarefa registrada.';
+
+  return `# Quiet Progress — ${date}
+
+## Scores
+- Build Score: ${day.progress.buildScore}%
+- Reduction Score: ${day.progress.reductionScore}%
+- Overall Score: ${day.progress.overallScore}%
+
+## Build Habits
+${buildLines}
+
+## Reduction Habits
+${reductionLines}
+
+## Tasks
+${taskLines}
+
+## Mindset
+- Energy: ${day.mindset.energia}/5
+- Focus: ${day.mindset.foco}/5
+- Motivation: ${day.mindset.motivacao}/5
+- Mood: ${day.mindset.humor}/5
+
+## Focus
+- Pomodoros completed: ${focus.completed}
+- Focus minutes: ${focus.minutes}
+
+## Notes
+${day.mindset.notas ? day.mindset.notas : '_Sem nota registrada._'}
+`;
+}
+
+function average(items) {
+  if (!items.length) return 0;
+  return Math.round((items.reduce((sum, item) => sum + Number(item || 0), 0) / items.length) * 10) / 10;
+}
+
+async function buildWeeklyReviewMarkdown(startDate) {
+  const start = normalizeDate(startDate);
+  const end = addDaysISO(start, 6);
+  const dates = [];
+  for (let date = start; date <= end; date = addDaysISO(date, 1)) {
+    dates.push(date);
+  }
+
+  const days = [];
+  for (const date of dates) {
+    days.push(await getDayPayload(date, { includeInactiveWithLogs: true }));
+  }
+
+  const buildScores = days.map((day) => day.progress.buildScore).filter((value) => value > 0);
+  const reductionScores = days.map((day) => day.progress.reductionScore).filter((value) => value > 0);
+  const overallScores = days.map((day) => day.progress.overallScore).filter((value) => value > 0);
+
+  const buildMap = new Map();
+  const reductionMap = new Map();
+  let tasksCompleted = 0;
+  let tasksPending = 0;
+  let occurrences = 0;
+  let cleanDays = 0;
+  const notes = [];
+  const mindset = { energia: [], foco: [], motivacao: [], humor: [] };
+
+  days.forEach((day) => {
+    day.habits.forEach((habit) => {
+      if (habit.habit_type === 'reduction') {
+        const item = reductionMap.get(habit.titulo) || { clean: 0, occurrences: 0, total: 0 };
+        item.total += 1;
+        if (habit.occurrence) {
+          item.occurrences += 1;
+          occurrences += 1;
+        } else {
+          item.clean += 1;
+          cleanDays += 1;
+        }
+        reductionMap.set(habit.titulo, item);
+      } else {
+        const item = buildMap.get(habit.titulo) || { done: 0, total: 0 };
+        item.total += 1;
+        if (habit.concluido) item.done += 1;
+        buildMap.set(habit.titulo, item);
+      }
+    });
+
+    day.tasks.forEach((task) => {
+      if (task.status === 'CONCLUIDO') tasksCompleted += 1;
+      else tasksPending += 1;
+    });
+
+    if (day.mindset.notas) {
+      notes.push(`- ${day.date}: ${day.mindset.notas.replace(/\n+/g, ' ').slice(0, 260)}`);
+    }
+
+    ['energia', 'foco', 'motivacao', 'humor'].forEach((key) => {
+      mindset[key].push(day.mindset[key]);
+    });
+  });
+
+  const buildHighlights = Array.from(buildMap.entries())
+    .sort((a, b) => b[1].done - a[1].done)
+    .map(([name, item]) => `- ${name}: ${item.done}/${item.total}`)
+    .join('\n') || '- Sem hábitos Build na semana.';
+
+  const reductionHighlights = Array.from(reductionMap.entries())
+    .sort((a, b) => b[1].clean - a[1].clean)
+    .map(([name, item]) => `- ${name}: ${item.clean}/${item.total} clean · ${item.occurrences} occurrences`)
+    .join('\n') || '- Sem hábitos Reduction na semana.';
+
+  return `# Weekly Review — ${start} to ${end}
+
+## Scores
+- Build Score: ${Math.round(average(buildScores))}%
+- Reduction Score: ${Math.round(average(reductionScores))}%
+- Overall Score: ${Math.round(average(overallScores))}%
+
+## Build Highlights
+${buildHighlights}
+
+## Reduction
+- Clean days: ${cleanDays}
+- Occurrences: ${occurrences}
+
+${reductionHighlights}
+
+## Tasks
+- Completed: ${tasksCompleted}
+- Pending: ${tasksPending}
+
+## Mindset Average
+- Energy: ${average(mindset.energia)}/5
+- Focus: ${average(mindset.foco)}/5
+- Motivation: ${average(mindset.motivacao)}/5
+- Mood: ${average(mindset.humor)}/5
+
+## Notes
+${notes.length ? notes.join('\n') : '_Sem notas na semana._'}
+`;
+}
+
+async function maybeMarkFocusHabit(date) {
+  const habit = await get(
+    `
+    SELECT *
+    FROM habitos
+    WHERE ativo = 1
+      AND LOWER(titulo) LIKE '%bloco de foco%'
+    ORDER BY id ASC
+    LIMIT 1
+    `
+  );
+
+  if (!habit) return { marked: false, reason: 'focus_habit_not_found' };
+
+  const now = nowISO();
+  await run(
+    `
+    INSERT INTO habitos_log (habito_id, data_ref, concluido, created_at, updated_at)
+    VALUES (?, ?, 1, ?, ?)
+    ON CONFLICT(habito_id, data_ref)
+    DO UPDATE SET concluido = 1, updated_at = excluded.updated_at
+    `,
+    [habit.id, date, now, now]
+  );
+
+  return { marked: true, habitId: habit.id, title: habit.titulo };
+}
+
 
 
 app.get('/api/backup', async (request, response) => {
@@ -2751,6 +3417,10 @@ initDatabase()
     lastMigrationInfo = migrationInfo || { legacyHabitTypeMigration: false };
     console.log(`[SQLite] DB_PATH ativo: ${DB_PATH}`);
     startReminderScheduler();
+
+    ensureDailyAutoBackup(false).catch((error) => {
+      console.error('[Backup] Auto backup no startup falhou:', error);
+    });
 
     app.listen(PORT, HOST, () => {
       const urls = getLocalNetworkUrls(PORT);

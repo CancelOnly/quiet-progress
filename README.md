@@ -304,3 +304,300 @@ Verifique o log de startup:
 [SQLite] Banco conectado em: /caminho/real/quiet_progress.db
 [SQLite] DB_PATH ativo: /caminho/real/quiet_progress.db
 ```
+
+
+## Quiet Progress v1.3 — Rituals, Reviews, Data Health & Low-End PM2
+
+Esta sprint adiciona recursos leves para uso real em LAN/homelab, sem frameworks novos e sem dependências pesadas.
+
+### Novidades
+
+```text
+End Day / Fechamento do dia
+Weekly Review em Markdown
+Backup automático diário validado
+Data Doctor / diagnóstico de dados
+Archive Habit / restaurar hábito arquivado
+Pomodoro registrado como focus_session
+PM2 ajustado para PC debug e notebook servidor fraco
+```
+
+### Instalação rápida
+
+```bash
+npm install --omit=dev
+cp .env.example .env
+nano .env
+npm start
+```
+
+### .env recomendado
+
+Para evitar banco vazio por diretório errado, defina `DB_PATH` absoluto no notebook servidor:
+
+```env
+PORT=3000
+HOST=0.0.0.0
+NODE_ENV=development
+
+APP_PASSWORD=troque-essa-senha
+SESSION_SECRET=gere-um-segredo-longo
+
+DB_PATH=/opt/quiet-progress/quiet_progress.db
+PUBLIC_BASE_URL=http://IP_DO_NOTEBOOK:3000
+```
+
+Em LAN HTTP, mantenha `NODE_ENV=development`. Não use `NODE_ENV=production` sem HTTPS, porque cookies `secure` podem impedir login.
+
+### PC principal / debug
+
+```bash
+npm start
+```
+
+Acesse:
+
+```text
+http://localhost:3000
+```
+
+### Notebook Linux / servidor LAN com PM2
+
+```bash
+npm install --omit=dev
+npm run pm2:start
+npm run pm2:logs
+pm2 save
+```
+
+Comandos:
+
+```bash
+npm run pm2:restart
+npm run pm2:stop
+npm run pm2:delete
+npm run pm2:logs
+```
+
+Reset se der bagunça:
+
+```bash
+npm run pm2:delete
+npm run pm2:start
+pm2 save
+```
+
+O `ecosystem.config.cjs` usa:
+
+```text
+instances: 1
+watch: false
+max_memory_restart: 300M
+logs/out.log
+logs/err.log
+logs/combined.log
+```
+
+### Futuro tunnel/HTTPS
+
+Para Cloudflare Tunnel/HTTPS:
+
+```env
+NODE_ENV=production
+HOST=127.0.0.1
+PUBLIC_BASE_URL=https://seu-subdominio.com
+```
+
+Use:
+
+```bash
+npm run pm2:start:tunnel
+```
+
+### End Day
+
+No Overview, o card **End Day** gera o fechamento do dia selecionado.
+
+Ações:
+
+```text
+Fechar dia
+Copiar Markdown
+Baixar .md
+```
+
+O fechamento salva/atualiza registro em `day_closures`, mas não bloqueia edições futuras.
+
+### Weekly Review
+
+No Journal, a seção **Weekly Review** gera um Markdown da semana do dia selecionado:
+
+```text
+Scores
+Build Highlights
+Reduction
+Tasks
+Mindset Average
+Notes
+```
+
+### Backup automático
+
+Ao iniciar o servidor, se não houver backup automático do dia, o app cria um backup validado em:
+
+```text
+backups/auto/
+```
+
+O backup automático:
+
+```text
+usa DB_PATH real
+roda WAL checkpoint
+valida integrity_check
+confere tabelas essenciais
+não aceita banco vazio de 4 KB
+mantém retenção simples
+```
+
+Você também pode clicar em **Criar backup agora** na tela Backup.
+
+### Data Doctor
+
+Na tela Backup, o Data Doctor mostra:
+
+```text
+DB_PATH absoluto
+DB existe
+tamanho do banco
+integrity_check
+tabelas
+contagens de hábitos/logs/tarefas/check-ins
+WAL/SHM detectados
+último backup automático
+warnings/errors
+```
+
+Isso ajuda a diagnosticar backup vazio, DB_PATH errado e backup antigo.
+
+### Archive Habit
+
+Na Habit Matrix, use **Arquivar** para remover um hábito do tracker sem apagar histórico.
+
+Em Backup/Config, a seção **Hábitos arquivados** permite restaurar.
+
+### Pomodoro como dado real
+
+Ao completar um Pomodoro, o app registra uma linha em `focus_sessions`.
+
+O Overview mostra:
+
+```text
+Focus blocks today
+Focus minutes
+```
+
+O End Day inclui:
+
+```text
+Pomodoros completed
+Focus minutes
+```
+
+### Git hygiene
+
+Antes de commitar:
+
+```bash
+npm run check
+git status --short
+```
+
+Não commitar:
+
+```text
+.env
+quiet_progress.db
+*.db
+*.db-wal
+*.db-shm
+backups/
+logs/
+exports/
+uploads/*
+node_modules/
+.cloudflared/
+```
+
+Pode commitar:
+
+```text
+src/
+public/
+scripts/
+deploy/
+README.md
+README-deploy.md
+.env.example
+ecosystem.config.cjs
+package.json
+package-lock.json
+uploads/.gitkeep
+```
+
+### Teste manual recomendado
+
+```text
+1. npm run check
+2. npm start
+3. login
+4. Habit Matrix
+5. Build habit
+6. Reduction habit
+7. scores/streaks/gráficos
+8. End Day copiar/baixar Markdown
+9. Weekly Review copiar/baixar Markdown
+10. Backup manual
+11. Backup automático / Data Doctor
+12. Arquivar/restaurar hábito
+13. Pomodoro curto e focus_session
+14. Restore com backup válido
+15. PM2 start/logs/restart/stop
+16. git status sem arquivos proibidos
+```
+
+
+## Hotfix v1.3.1 — runtime frontend e DB_PATH
+
+Correções:
+
+```text
+runAutoBackupNow/loadDataDoctor/loadArchivedHabits restaurados no app.js
+Data Doctor/Backup Status carregam corretamente
+CSP permite source map do Chart.js via jsdelivr
+meta mobile-web-app-capable adicionada
+service-worker cache bump para evitar app.js antigo
+```
+
+Se o app não carregar o banco esperado, confira o log:
+
+```text
+[SQLite] Banco conectado em: /caminho/do/quiet_progress.db
+[SQLite] DB_PATH ativo: /caminho/do/quiet_progress.db
+```
+
+Para PM2 no notebook, prefira `.env` com caminho absoluto:
+
+```env
+DB_PATH=/caminho/absoluto/quiet_progress.db
+NODE_ENV=development
+HOST=0.0.0.0
+PORT=3000
+```
+
+Depois:
+
+```bash
+npm run pm2:restart
+npm run pm2:logs
+```

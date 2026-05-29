@@ -4,6 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="theme-color" content="#000000" />
+    <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-title" content="Quiet Progress" />
     <title>Quiet Progress // Temporal OS</title>
@@ -192,6 +193,28 @@
                   <button id="lockinResetBtn" type="button">Reset</button>
                   <button id="lockinSoundBtn" type="button">Sound On</button>
                 </div>
+
+                <div class="focus-summary" id="overviewFocusSummary">
+                  Focus blocks today: 0 · Focus minutes: 0
+                </div>
+              </div>
+            </article>
+
+            <article class="panel overview-end-day">
+              <div class="panel-header compact-header">
+                <div>
+                  <div class="panel-kicker">Ritual</div>
+                  <h2 class="panel-title">End Day / Fechamento</h2>
+                </div>
+                <span class="chip" id="endDayStatusChip">OPEN</span>
+              </div>
+              <p class="note-preview">
+                Fecha o dia selecionado em Markdown com hábitos Build/Reduction, tarefas, mindset, foco e notas.
+              </p>
+              <div class="overview-actions">
+                <button class="status-btn" id="closeDayBtn" type="button">Fechar dia</button>
+                <button class="status-btn" id="copyEndDayBtn" type="button">Copiar Markdown</button>
+                <button class="status-btn" id="downloadEndDayBtn" type="button">Baixar .md</button>
               </div>
             </article>
 
@@ -418,6 +441,17 @@
               </div>
             </div>
 
+            <div class="weekly-review-box" id="weeklyReviewBox">
+              <div>
+                <strong>Weekly Review</strong>
+                <span id="weeklyReviewRange">Semana atual</span>
+              </div>
+              <div class="overview-actions">
+                <button class="status-btn" id="copyWeeklyReviewBtn" type="button">Copiar Weekly Review</button>
+                <button class="status-btn" id="downloadWeeklyReviewBtn" type="button">Baixar .md</button>
+              </div>
+            </div>
+
             <div class="history-list" id="journalList"></div>
             <div class="history-detail" id="journalDetail"></div>
           </section>
@@ -520,9 +554,14 @@
 
             <div class="system-tools-actions">
               <button class="system-tool-btn" id="backupBtn" type="button">Download Backup</button>
+              <button class="system-tool-btn" id="runAutoBackupBtn" type="button">Criar backup agora</button>
+              <button class="system-tool-btn" id="refreshDataDoctorBtn" type="button">Ver status</button>
               <button class="system-tool-btn danger" id="restoreDbBtn" type="button">Restaurar Banco de Dados</button>
               <input id="restoreDbInput" type="file" accept=".db" hidden />
             </div>
+            <div class="health-box" id="backupStatusBox">Carregando backup status...</div>
+            <div class="health-box data-doctor-box" id="dataDoctorBox">Carregando Data Doctor...</div>
+            <div class="health-box" id="archivedHabitsBox">Carregando hábitos arquivados...</div>
             <div class="health-box" id="healthBox">Carregando diagnóstico...</div>
           </section>
         </section>

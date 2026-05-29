@@ -139,6 +139,7 @@ async function initDatabase() {
       ordem INTEGER DEFAULT 0,
       data_inicio TEXT DEFAULT NULL,
       data_fim TEXT DEFAULT NULL,
+      archived_at TEXT DEFAULT NULL,
       habit_type TEXT NOT NULL DEFAULT 'build' CHECK (habit_type IN ('build', 'reduction')),
       created_at TEXT NOT NULL,
       updated_at TEXT
@@ -217,6 +218,38 @@ async function initDatabase() {
     )
   `);
 
+  await run(`
+    CREATE TABLE IF NOT EXISTS day_closures (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      data_ref TEXT NOT NULL UNIQUE,
+      summary TEXT DEFAULT '',
+      markdown TEXT DEFAULT '',
+      closed_at TEXT,
+      updated_at TEXT
+    )
+  `);
+
+  await run(`
+    CREATE TABLE IF NOT EXISTS focus_sessions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      data_ref TEXT NOT NULL,
+      started_at TEXT,
+      ended_at TEXT,
+      duration_minutes INTEGER NOT NULL DEFAULT 0,
+      completed INTEGER NOT NULL DEFAULT 1 CHECK (completed IN (0, 1)),
+      label TEXT DEFAULT 'Pomodoro',
+      created_at TEXT NOT NULL
+    )
+  `);
+
+  await run(`
+    CREATE TABLE IF NOT EXISTS app_settings (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL,
+      updated_at TEXT
+    )
+  `);
+
   /*
     Migrações defensivas para versões antigas.
     Não apaga histórico. Apenas cria colunas novas quando possível.
@@ -227,6 +260,7 @@ async function initDatabase() {
   await addColumnIfMissing('habitos', 'ordem', 'INTEGER DEFAULT 0');
   await addColumnIfMissing('habitos', 'data_inicio', 'TEXT DEFAULT NULL');
   await addColumnIfMissing('habitos', 'data_fim', 'TEXT DEFAULT NULL');
+  await addColumnIfMissing('habitos', 'archived_at', 'TEXT DEFAULT NULL');
 
   if (!(await hasColumn('habitos', 'habit_type'))) {
     legacyHabitTypeMigration = true;
@@ -372,6 +406,10 @@ async function initDatabase() {
   await createIndex(`CREATE UNIQUE INDEX IF NOT EXISTS idx_push_subscriptions_endpoint ON push_subscriptions(endpoint)`);
   await createIndex(`CREATE INDEX IF NOT EXISTS idx_push_subscriptions_active ON push_subscriptions(active)`);
   await createIndex(`CREATE INDEX IF NOT EXISTS idx_reminders_enabled_time ON reminders(enabled, time)`);
+  await createIndex(`CREATE UNIQUE INDEX IF NOT EXISTS idx_day_closures_data ON day_closures(data_ref)`);
+  await createIndex(`CREATE INDEX IF NOT EXISTS idx_focus_sessions_data ON focus_sessions(data_ref)`);
+  await createIndex(`CREATE INDEX IF NOT EXISTS idx_focus_sessions_completed ON focus_sessions(data_ref, completed)`);
+
 
   const reminderCount = await get(`SELECT COUNT(*) AS total FROM reminders`);
   if (Number(reminderCount?.total || 0) === 0) {
@@ -391,6 +429,23 @@ async function initDatabase() {
         now
       ]
     );
+  }
+
+  const defaultSettings = [
+    ['auto_backup_enabled', 'true'],
+    ['auto_backup_retention_days', '30'],
+    ['pomodoro_mark_focus_habit', 'ask'],
+  ];
+
+  for (const [key, value] of defaultSettings) {
+    await run(
+      `
+      INSERT INTO app_settings (key, value, updated_at)
+      VALUES (?, ?, ?)
+      ON CONFLICT(key) DO NOTHING
+      `,
+      [key, value, now]
+    ).catch(() => {});
   }
 
   const count = await get(`SELECT COUNT(*) AS total FROM habitos`);

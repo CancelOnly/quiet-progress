@@ -7,11 +7,15 @@
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
     "generate:vapid": "node scripts/generate-vapid.js",
-    "pm2:start": "mkdir -p logs && pm2 start ecosystem.config.cjs",
+    "pm2:start": "mkdir -p logs && pm2 start ecosystem.config.cjs --env production_local",
     "pm2:restart": "pm2 restart quiet-progress",
     "pm2:logs": "pm2 logs quiet-progress --lines 100",
     "pm2:stop": "pm2 stop quiet-progress",
-    "check": "node --check src/server.js && node --check src/database.js && node --check public/app.js && node --check public/login.js && node --check public/service-worker.js"
+    "check": "node --check src/server.js && node --check src/database.js && node --check public/app.js && node --check public/login.js && node --check public/service-worker.js",
+    "pm2:start:dev": "mkdir -p logs && pm2 start ecosystem.config.cjs --env development",
+    "pm2:start:tunnel": "mkdir -p logs && pm2 start ecosystem.config.cjs --env production_tunnel",
+    "pm2:delete": "pm2 delete quiet-progress",
+    "pm2:save": "pm2 save"
   },
   "dependencies": {
     "dotenv": "^16.4.7",

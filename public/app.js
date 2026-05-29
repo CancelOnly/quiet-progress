@@ -28,6 +28,7 @@ let lockinRemainingSeconds = lockinInitialSeconds;
 let lockinInterval = null;
 let lockinRunning = false;
 let lockinExpectedEndTime = null;
+let lockinStartedAt = null;
 let lockinAudioContext = null;
 let lockinSoundEnabled =
   localStorage.getItem('quietProgress.lockin.sound') !== 'false';
@@ -120,6 +121,14 @@ const elements = {
   restoreDbBtn: document.getElementById('restoreDbBtn'),
   restoreDbInput: document.getElementById('restoreDbInput'),
   healthBox: document.getElementById('healthBox'),
+  weeklyReviewRange: document.getElementById('weeklyReviewRange'),
+  copyWeeklyReviewBtn: document.getElementById('copyWeeklyReviewBtn'),
+  downloadWeeklyReviewBtn: document.getElementById('downloadWeeklyReviewBtn'),
+  runAutoBackupBtn: document.getElementById('runAutoBackupBtn'),
+  refreshDataDoctorBtn: document.getElementById('refreshDataDoctorBtn'),
+  backupStatusBox: document.getElementById('backupStatusBox'),
+  dataDoctorBox: document.getElementById('dataDoctorBox'),
+  archivedHabitsBox: document.getElementById('archivedHabitsBox'),
 
   lockinTime: document.getElementById('lockinTime'),
   lockinStartBtn: document.getElementById('lockinStartBtn'),
@@ -129,6 +138,11 @@ const elements = {
   lockinPresetButtons: Array.from(document.querySelectorAll('.lockin-preset')),
   lockinCustomWrap: document.getElementById('lockinCustomWrap'),
   lockinCustomInput: document.getElementById('lockinCustomInput'),
+  endDayStatusChip: document.getElementById('endDayStatusChip'),
+  downloadEndDayBtn: document.getElementById('downloadEndDayBtn'),
+  copyEndDayBtn: document.getElementById('copyEndDayBtn'),
+  closeDayBtn: document.getElementById('closeDayBtn'),
+  overviewFocusSummary: document.getElementById('overviewFocusSummary'),
 
   monthDonutChart: document.getElementById('monthDonutChart'),
   tasksBarChart: document.getElementById('tasksBarChart'),
@@ -253,6 +267,20 @@ function showToast(message) {
     elements.toast.classList.remove('show');
   }, 2100);
 }
+
+
+function downloadTextFile(filename, content, mime = 'text/plain') {
+  const blob = new Blob([content], { type: `${mime};charset=utf-8` });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+}
+
 
 function debounce(fn, wait) {
   let timeout = null;
@@ -399,6 +427,7 @@ function renderOverview() {
   }
 
   renderOverviewStreaks();
+  renderOverviewFocusSummary();
 
   renderTaskList(elements.overviewTaskList, state.day.tasks.slice(0, 5), {
     empty: 'Nenhuma tarefa neste dia.',
@@ -533,6 +562,84 @@ function renderReductionSummary() {
 }
 
 
+function renderOverviewFocusSummary() {
+  if (!elements.overviewFocusSummary) return;
+
+  const focus = state.day?.focus || { completed: 0, minutes: 0 };
+
+  elements.overviewFocusSummary.textContent = `Focus blocks today: ${focus.completed} · Focus minutes: ${focus.minutes}`;
+}
+
+async function fetchEndDayMarkdown(close = false) {
+  const date = state.selectedDate;
+
+  if (close) {
+    const payload = await api(`/day/${date}/end-day`, {
+      method: 'POST',
+      body: JSON.stringify({}),
+    });
+
+    if (elements.endDayStatusChip) {
+      elements.endDayStatusChip.textContent = 'CLOSED';
+    }
+
+    return payload.markdown;
+  }
+
+  const payload = await api(`/day/${date}/end-day`);
+  if (elements.endDayStatusChip) {
+    elements.endDayStatusChip.textContent = payload.closed ? 'CLOSED' : 'OPEN';
+  }
+  return payload.markdown;
+}
+
+async function closeDay() {
+  const markdown = await fetchEndDayMarkdown(true);
+  showToast('Dia fechado.');
+  return markdown;
+}
+
+async function copyEndDayMarkdown() {
+  const markdown = await fetchEndDayMarkdown(false);
+  await navigator.clipboard.writeText(markdown);
+  showToast('Markdown do fechamento copiado.');
+}
+
+async function downloadEndDayMarkdown() {
+  const markdown = await fetchEndDayMarkdown(false);
+  downloadTextFile(
+    `${state.selectedDate}-QuietProgress-EndDay.md`,
+    markdown,
+    'text/markdown'
+  );
+}
+
+async function fetchWeeklyReviewMarkdown() {
+  const payload = await api(`/week/${state.selectedDate}/review`);
+
+  if (elements.weeklyReviewRange) {
+    elements.weeklyReviewRange.textContent = `${payload.weekStart} → ${payload.weekEnd}`;
+  }
+
+  return payload.markdown;
+}
+
+async function copyWeeklyReviewMarkdown() {
+  const markdown = await fetchWeeklyReviewMarkdown();
+  await navigator.clipboard.writeText(markdown);
+  showToast('Weekly Review copiado.');
+}
+
+async function downloadWeeklyReviewMarkdown() {
+  const payload = await api(`/week/${state.selectedDate}/review`);
+  downloadTextFile(
+    `${payload.weekStart}-to-${payload.weekEnd}-WeeklyReview.md`,
+    payload.markdown,
+    'text/markdown'
+  );
+}
+
+
 function renderTracker() {
   if (!state.dashboard) return;
 
@@ -613,6 +720,7 @@ function renderHabitMatrix() {
           <small>${escapeHTML(habit.subtitulo || '')}</small>
           <div class="habit-row-actions">
             <button class="row-link edit-habit-inline" type="button" data-habit-id="${habit.id}">Editar</button>
+            <button class="row-link archive-habit-inline" type="button" data-habit-id="${habit.id}">Arquivar</button>
             <button class="row-link danger delete-habit-inline" type="button" data-habit-id="${habit.id}">Excluir</button>
           </div>
         </div>
@@ -1401,6 +1509,26 @@ function openHabitModal(habit = null, defaults = {}) {
   updateColorPreview();
 }
 
+function archiveHabit(id) {
+  openModal({
+    title: 'Arquivar hábito',
+    message:
+      'Arquivar este hábito? Ele deixará de aparecer no tracker, mas o histórico será preservado.',
+    confirmText: 'Arquivar',
+    confirmClass: 'danger',
+    onConfirm: async () => {
+      await api(`/habits/${id}/archive`, {
+        method: 'PATCH',
+        body: JSON.stringify({ archive: true }),
+      });
+      showToast('Hábito arquivado.');
+      await refreshAll();
+      return true;
+    },
+  });
+}
+
+
 function openTaskModal(task = null, defaults = {}) {
   const isEdit = Boolean(task);
 
@@ -1849,6 +1977,127 @@ function showLegacyHabitTypeNotice() {
 }
 
 
+
+function formatBytes(bytes) {
+  const value = Number(bytes || 0);
+  if (value < 1024) return `${value} B`;
+  if (value < 1024 * 1024) return `${Math.round(value / 1024)} KB`;
+  return `${Math.round((value / 1024 / 1024) * 10) / 10} MB`;
+}
+
+async function loadBackupStatus() {
+  if (!elements.backupStatusBox) return;
+
+  try {
+    const payload = await api('/backup/status');
+    const backups = payload.backups || {};
+
+    elements.backupStatusBox.innerHTML = `
+      <strong>Backup Status</strong><br>
+      <span>DB_PATH:</span> ${escapeHTML(payload.dbPath || '')}<br>
+      <span>DB size:</span> ${formatBytes(payload.db?.size)}<br>
+      <span>Último auto backup:</span> ${escapeHTML(backups.latestAuto?.name || 'nenhum')}<br>
+      <span>Auto backups:</span> ${Number(backups.autoCount || 0)}<br>
+      <span>Última falha:</span> ${escapeHTML(backups.lastAutoBackupError || 'nenhuma')}
+    `;
+  } catch (error) {
+    elements.backupStatusBox.innerHTML = `<strong>Backup Status</strong><br>Erro: ${escapeHTML(error.message)}`;
+  }
+}
+
+async function runAutoBackupNow() {
+  const payload = await api('/backup/auto/run', {
+    method: 'POST',
+    body: JSON.stringify({}),
+  });
+
+  if (payload.ok) {
+    showToast(payload.skipped ? 'Backup automático já estava em dia.' : 'Backup criado.');
+  } else {
+    showToast(payload.error || 'Backup automático falhou.');
+  }
+
+  await loadBackupStatus();
+  await loadDataDoctor();
+}
+
+async function loadDataDoctor() {
+  if (!elements.dataDoctorBox) return;
+
+  try {
+    const payload = await api('/health/data');
+    const statusLabel =
+      payload.status === 'ok' ? 'OK' : payload.status === 'warning' ? 'WARNING' : 'ERROR';
+
+    const warnings = (payload.warnings || [])
+      .map((item) => `<li>${escapeHTML(item)}</li>`)
+      .join('');
+    const errors = (payload.errors || [])
+      .map((item) => `<li>${escapeHTML(item)}</li>`)
+      .join('');
+
+    elements.dataDoctorBox.innerHTML = `
+      <strong>Data Doctor: ${statusLabel}</strong><br>
+      <span>DB_PATH:</span> ${escapeHTML(payload.db?.path || '')}<br>
+      <span>DB existe:</span> ${payload.db?.exists ? 'sim' : 'não'}<br>
+      <span>Tamanho:</span> ${formatBytes(payload.db?.size)}<br>
+      <span>Integrity:</span> ${escapeHTML(payload.integrity || 'unknown')}<br>
+      <span>Tabelas:</span> ${(payload.tables || []).length}<br>
+      <span>Hábitos:</span> ${payload.counts?.habitos ?? 'n/a'} ·
+      <span>Logs:</span> ${payload.counts?.habitos_log ?? 'n/a'} ·
+      <span>Tarefas:</span> ${payload.counts?.tarefas ?? 'n/a'} ·
+      <span>Check-ins:</span> ${payload.counts?.mindset ?? 'n/a'}<br>
+      <span>WAL:</span> ${payload.db?.walExists ? `sim (${formatBytes(payload.db?.walSize)})` : 'não'} ·
+      <span>SHM:</span> ${payload.db?.shmExists ? 'sim' : 'não'}
+      ${warnings ? `<div class="doctor-warnings"><strong>Avisos</strong><ul>${warnings}</ul></div>` : ''}
+      ${errors ? `<div class="doctor-errors"><strong>Erros</strong><ul>${errors}</ul></div>` : ''}
+    `;
+  } catch (error) {
+    elements.dataDoctorBox.innerHTML = `<strong>Data Doctor</strong><br>Erro: ${escapeHTML(error.message)}`;
+  }
+}
+
+async function loadArchivedHabits() {
+  if (!elements.archivedHabitsBox) return;
+
+  try {
+    const payload = await api('/habits/archived');
+    const habits = payload.habits || [];
+
+    elements.archivedHabitsBox.innerHTML = `
+      <strong>Hábitos arquivados</strong>
+      ${
+        habits.length
+          ? habits
+              .map(
+                (habit) => `
+                <div class="archived-habit-row">
+                  <span>${escapeHTML(habit.titulo)} · ${escapeHTML(habit.habit_type)}</span>
+                  <button class="row-link restore-archived-habit" data-habit-id="${habit.id}" type="button">Restaurar</button>
+                </div>
+              `
+              )
+              .join('')
+          : '<div class="empty-state small">Nenhum hábito arquivado.</div>'
+      }
+    `;
+  } catch (error) {
+    elements.archivedHabitsBox.innerHTML = `<strong>Hábitos arquivados</strong><br>Erro: ${escapeHTML(error.message)}`;
+  }
+}
+
+async function restoreArchivedHabit(id) {
+  await api(`/habits/${id}/archive`, {
+    method: 'PATCH',
+    body: JSON.stringify({ archive: false }),
+  });
+
+  showToast('Hábito restaurado.');
+  await refreshAll();
+  await loadArchivedHabits();
+}
+
+
 async function loadHealth() {
   const payload = await api('/health');
   state.health = payload;
@@ -1862,6 +2111,12 @@ async function loadHealth() {
     <strong>DB existe:</strong> ${payload.databaseExists ? 'sim' : 'não'}<br>
     <strong>Memória heap:</strong> ${Math.round(payload.memory.heapUsed / 1024 / 1024)} MB
   `;
+
+  await Promise.allSettled([
+    loadBackupStatus(),
+    loadDataDoctor(),
+    loadArchivedHabits(),
+  ]);
 }
 
 function persistLockinState() {
@@ -2018,6 +2273,7 @@ function startLockinTimer() {
   if (lockinRunning) return;
 
   lockinRunning = true;
+  lockinStartedAt = lockinStartedAt || new Date().toISOString();
   lockinExpectedEndTime = Date.now() + lockinRemainingSeconds * 1000;
   document.body.classList.add('focus-mode');
 
@@ -2040,6 +2296,7 @@ function pauseLockinTimer() {
 function resetLockinTimer() {
   lockinRunning = false;
   lockinExpectedEndTime = null;
+  lockinStartedAt = null;
   lockinRemainingSeconds = lockinInitialSeconds;
   document.body.classList.remove('focus-mode');
   window.clearInterval(lockinInterval);
@@ -2049,8 +2306,13 @@ function resetLockinTimer() {
 }
 
 function finishLockinTimer() {
+  const startedAt = lockinStartedAt || new Date(Date.now() - lockinInitialSeconds * 1000).toISOString();
+  const endedAt = new Date().toISOString();
+  const durationMinutes = Math.max(1, Math.round(lockinInitialSeconds / 60));
+
   lockinRunning = false;
   lockinExpectedEndTime = null;
+  lockinStartedAt = null;
   lockinRemainingSeconds = 0;
   document.body.classList.remove('focus-mode');
   window.clearInterval(lockinInterval);
@@ -2058,7 +2320,26 @@ function finishLockinTimer() {
   renderLockinTimer();
   persistLockinState();
   playLockinFinishedSound();
-  showToast('Focus block complete');
+
+  api('/focus-sessions', {
+    method: 'POST',
+    body: JSON.stringify({
+      data_ref: state.selectedDate || new Date().toISOString().slice(0, 10),
+      started_at: startedAt,
+      ended_at: endedAt,
+      duration_minutes: durationMinutes,
+      label: 'Pomodoro',
+      mark_focus_habit: false,
+    }),
+  })
+    .then(async () => {
+      showToast('Focus block complete. Sessão registrada.');
+      await loadDay(state.selectedDate);
+    })
+    .catch((error) => {
+      console.warn('[Pomodoro] Falha ao registrar sessão:', error);
+      showToast('Focus block complete. Registro falhou.');
+    });
 }
 
 
@@ -2150,6 +2431,13 @@ function attachEvents() {
     }
 
     const editHabitBtn = event.target.closest('.edit-habit-inline');
+    const archiveHabitButton = event.target.closest('.archive-habit-inline');
+
+    if (archiveHabitButton) {
+      archiveHabit(Number(archiveHabitButton.dataset.habitId));
+      return;
+    }
+
     if (editHabitBtn) {
       openHabitModal(getHabitById(editHabitBtn.dataset.habitId));
       return;
@@ -2252,6 +2540,27 @@ function attachEvents() {
   elements.restoreDbInput.addEventListener('change', () =>
     restoreDatabase(elements.restoreDbInput.files?.[0])
   );
+  elements.runAutoBackupBtn?.addEventListener('click', runAutoBackupNow);
+  elements.refreshDataDoctorBtn?.addEventListener('click', async () => {
+    await Promise.allSettled([loadBackupStatus(), loadDataDoctor(), loadArchivedHabits()]);
+    showToast('Status atualizado.');
+  });
+  elements.refreshDataDoctorBtn?.addEventListener('click', () => {
+    loadBackupStatus();
+    loadDataDoctor();
+    loadArchivedHabits();
+  });
+  elements.copyWeeklyReviewBtn?.addEventListener('click', copyWeeklyReviewMarkdown);
+  elements.downloadWeeklyReviewBtn?.addEventListener('click', downloadWeeklyReviewMarkdown);
+  elements.closeDayBtn?.addEventListener('click', closeDay);
+  elements.copyEndDayBtn?.addEventListener('click', copyEndDayMarkdown);
+  elements.downloadEndDayBtn?.addEventListener('click', downloadEndDayMarkdown);
+  elements.archivedHabitsBox?.addEventListener('click', (event) => {
+    const button = event.target.closest('.restore-archived-habit');
+    if (!button) return;
+    restoreArchivedHabit(Number(button.dataset.habitId));
+  });
+
 
   elements.modalCancelBtn.addEventListener('click', closeModal);
   elements.modalOverlay.addEventListener('click', (event) => {
