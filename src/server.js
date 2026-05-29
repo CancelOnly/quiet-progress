@@ -470,9 +470,11 @@ app.use(
   })
 );
 
-
 function isSecurePublicBaseUrl() {
-  return PUBLIC_BASE_URL.startsWith('https://') || PUBLIC_BASE_URL.includes('localhost');
+  return (
+    PUBLIC_BASE_URL.startsWith('https://') ||
+    PUBLIC_BASE_URL.includes('localhost')
+  );
 }
 
 function parseDaysOfWeek(value) {
@@ -520,7 +522,9 @@ function normalizeReminderBody(body, current = {}) {
   const route = String(body.route ?? current.route ?? '/').trim() || '/';
   const days = parseDaysOfWeek(body.days_of_week ?? current.days_of_week);
   const enabled =
-    body.enabled === undefined ? Number(current.enabled ?? 1) === 1 : Boolean(body.enabled);
+    body.enabled === undefined
+      ? Number(current.enabled ?? 1) === 1
+      : Boolean(body.enabled);
 
   if (!title) {
     throw new Error('title é obrigatório.');
@@ -640,7 +644,10 @@ async function runReminderTick() {
     const days = parseDaysOfWeek(reminder.days_of_week);
 
     if (!days.includes(dayOfWeek)) continue;
-    if (reminder.last_sent_at && reminder.last_sent_at.slice(0, 16) === minuteKey) {
+    if (
+      reminder.last_sent_at &&
+      reminder.last_sent_at.slice(0, 16) === minuteKey
+    ) {
       continue;
     }
 
@@ -792,7 +799,9 @@ app.post('/api/push/test', async (request, response) => {
     });
   } catch (error) {
     console.error('[PUSH] Erro no teste:', error);
-    response.status(500).json({ error: 'Erro ao enviar notificação de teste.' });
+    response
+      .status(500)
+      .json({ error: 'Erro ao enviar notificação de teste.' });
   }
 });
 
@@ -847,7 +856,9 @@ app.post('/api/reminders', async (request, response) => {
     });
   } catch (error) {
     console.error('[PUSH] Erro ao criar reminder:', error);
-    response.status(400).json({ error: error.message || 'Erro ao criar lembrete.' });
+    response
+      .status(400)
+      .json({ error: error.message || 'Erro ao criar lembrete.' });
   }
 });
 
@@ -893,7 +904,9 @@ app.patch('/api/reminders/:id', async (request, response) => {
     });
   } catch (error) {
     console.error('[PUSH] Erro ao editar reminder:', error);
-    response.status(400).json({ error: error.message || 'Erro ao editar lembrete.' });
+    response
+      .status(400)
+      .json({ error: error.message || 'Erro ao editar lembrete.' });
   }
 });
 
@@ -1022,7 +1035,10 @@ function getMonthWeeks(monthValue) {
 }
 
 function getWeekStartISO(dateISO) {
-  return addDaysISO(normalizeDate(dateISO), -getWeekdayIndexMondayFirst(normalizeDate(dateISO)));
+  return addDaysISO(
+    normalizeDate(dateISO),
+    -getWeekdayIndexMondayFirst(normalizeDate(dateISO))
+  );
 }
 
 function getWeekForDate(dateISO) {
@@ -1260,7 +1276,11 @@ function calcHabitStreaks(habit, dates, logMap, anchorDate) {
   let current = 0;
 
   if (anchor) {
-    for (let date = anchor; validDateSet.has(date); date = addDaysISO(date, -1)) {
+    for (
+      let date = anchor;
+      validDateSet.has(date);
+      date = addDaysISO(date, -1)
+    ) {
       const checked = logMap[`${habit.id}:${date}`] === true;
       const success = isReduction ? !checked : checked;
 
@@ -1289,7 +1309,6 @@ function calcHabitStreaks(habit, dates, logMap, anchorDate) {
     best,
   };
 }
-
 
 async function getDayPayload(date, options = {}) {
   const includeInactiveWithLogs = Boolean(options.includeInactiveWithLogs);
@@ -1360,7 +1379,9 @@ async function getDayPayload(date, options = {}) {
   );
 
   const buildDone = buildHabits.filter((habit) => habit.success).length;
-  const reductionClean = reductionHabits.filter((habit) => habit.success).length;
+  const reductionClean = reductionHabits.filter(
+    (habit) => habit.success
+  ).length;
   const reductionOccurrences = reductionHabits.filter(
     (habit) => habit.occurrence
   ).length;
@@ -1374,7 +1395,9 @@ async function getDayPayload(date, options = {}) {
   if (buildHabits.length) scoreParts.push(buildScore);
   if (reductionHabits.length) scoreParts.push(reductionScore);
   const overallScore = scoreParts.length
-    ? Math.round(scoreParts.reduce((sum, item) => sum + item, 0) / scoreParts.length)
+    ? Math.round(
+        scoreParts.reduce((sum, item) => sum + item, 0) / scoreParts.length
+      )
     : 0;
 
   const tasksPercent = calcPercent(tasksDone, tasks.length);
@@ -1610,7 +1633,9 @@ async function getDashboardMonth(monthValue, options = {}) {
   if (buildStats.length) scoreParts.push(buildScore);
   if (reductionStats.length) scoreParts.push(reductionScore);
   const overallScore = scoreParts.length
-    ? Math.round(scoreParts.reduce((sum, item) => sum + item, 0) / scoreParts.length)
+    ? Math.round(
+        scoreParts.reduce((sum, item) => sum + item, 0) / scoreParts.length
+      )
     : 0;
 
   const activeStreaks = {
@@ -1833,7 +1858,9 @@ ${day.mindset.notas ? day.mindset.notas : '_Sem nota registrada._'}
 app.get('/api/dashboard', async (request, response) => {
   try {
     const month = normalizeMonth(request.query.month);
-    response.json(await getDashboardMonth(month, { anchorDate: request.query.date }));
+    response.json(
+      await getDashboardMonth(month, { anchorDate: request.query.date })
+    );
   } catch (error) {
     console.error(error);
     response.status(500).json({ error: 'Erro ao carregar dashboard mensal.' });
@@ -1872,7 +1899,9 @@ app.get('/api/habits', async (request, response) => {
 
     response.json({
       ok: true,
-      legacyHabitTypeMigration: Boolean(lastMigrationInfo.legacyHabitTypeMigration),
+      legacyHabitTypeMigration: Boolean(
+        lastMigrationInfo.legacyHabitTypeMigration
+      ),
       habits: habits.map((habit) => ({
         id: habit.id,
         titulo: habit.titulo,
@@ -1929,7 +1958,6 @@ app.patch('/api/habits/types', async (request, response) => {
     response.status(500).json({ error: 'Erro ao atualizar tipos de hábitos.' });
   }
 });
-
 
 app.post('/api/habits', async (request, response) => {
   try {
@@ -2437,8 +2465,6 @@ app.get('/api/day/:date/markdown', async (request, response) => {
   }
 });
 
-
-
 app.get('/api/day/:date/end-day', async (request, response) => {
   try {
     const date = normalizeDate(request.params.date);
@@ -2524,7 +2550,8 @@ app.post('/api/focus-sessions', async (request, response) => {
     const duration = clampNumber(request.body?.duration_minutes, 1, 720, 25);
     const startedAt = request.body?.started_at || nowISO();
     const endedAt = request.body?.ended_at || nowISO();
-    const label = String(request.body?.label || 'Pomodoro').trim() || 'Pomodoro';
+    const label =
+      String(request.body?.label || 'Pomodoro').trim() || 'Pomodoro';
     const shouldMarkFocusHabit = request.body?.mark_focus_habit === true;
     const now = nowISO();
 
@@ -2669,10 +2696,11 @@ app.get('/api/habits/archived', async (request, response) => {
     });
   } catch (error) {
     console.error(error);
-    response.status(500).json({ error: 'Erro ao carregar hábitos arquivados.' });
+    response
+      .status(500)
+      .json({ error: 'Erro ao carregar hábitos arquivados.' });
   }
 });
-
 
 function openTempSQLite(filePath, mode = sqlite3.OPEN_READONLY) {
   return new Promise((resolve, reject) => {
@@ -2721,7 +2749,9 @@ async function validateSQLiteBackupFile(filePath, options = {}) {
 
   const stats = fs.statSync(filePath);
   if (stats.size < 4096) {
-    throw new Error('Backup inválido: arquivo pequeno demais para conter o banco do app.');
+    throw new Error(
+      'Backup inválido: arquivo pequeno demais para conter o banco do app.'
+    );
   }
 
   const tempDb = await openTempSQLite(filePath, sqlite3.OPEN_READONLY);
@@ -2731,7 +2761,9 @@ async function validateSQLiteBackupFile(filePath, options = {}) {
     const integrityValue = Object.values(integrity || {})[0];
 
     if (integrityValue !== 'ok') {
-      throw new Error(`Arquivo SQLite falhou no integrity_check: ${integrityValue}`);
+      throw new Error(
+        `Arquivo SQLite falhou no integrity_check: ${integrityValue}`
+      );
     }
 
     const tableRows = await tempAll(
@@ -2754,10 +2786,14 @@ async function validateSQLiteBackupFile(filePath, options = {}) {
     }
 
     const expectedTables = ['habitos', 'habitos_log', 'tarefas', 'mindset'];
-    const missing = expectedTables.filter((table) => !tableNames.includes(table));
+    const missing = expectedTables.filter(
+      (table) => !tableNames.includes(table)
+    );
 
     if (missing.length) {
-      throw new Error(`Backup inválido. Tabelas ausentes: ${missing.join(', ')}`);
+      throw new Error(
+        `Backup inválido. Tabelas ausentes: ${missing.join(', ')}`
+      );
     }
 
     if (options.requireAppTables !== false && !tableNames.includes('habitos')) {
@@ -2793,7 +2829,6 @@ function removeSQLiteSidecars(dbPath) {
     }
   });
 }
-
 
 async function getSettingsMap() {
   const rows = await all(`SELECT key, value FROM app_settings`).catch(() => []);
@@ -2845,7 +2880,9 @@ async function createValidatedBackup(reason = 'manual', options = {}) {
   fs.mkdirSync(targetDir, { recursive: true });
 
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-  const prefix = options.auto ? 'quiet_progress_auto' : `quiet_progress_${reason}`;
+  const prefix = options.auto
+    ? 'quiet_progress_auto'
+    : `quiet_progress_${reason}`;
   const backupPath = path.join(targetDir, `${prefix}_${timestamp}.db`);
 
   fs.copyFileSync(DB_PATH, backupPath);
@@ -2990,9 +3027,12 @@ async function buildDataDoctor() {
   }
 
   if (!tables.length && dbInfo.exists) warnings.push('Banco com 0 tabelas.');
-  if (!columns.habitos?.includes('habit_type')) warnings.push('Banco sem habit_type: backup antigo.');
-  if (!columns.habitos?.includes('data_inicio')) warnings.push('Banco sem data_inicio.');
-  if (!columns.habitos?.includes('data_fim')) warnings.push('Banco sem data_fim.');
+  if (!columns.habitos?.includes('habit_type'))
+    warnings.push('Banco sem habit_type: backup antigo.');
+  if (!columns.habitos?.includes('data_inicio'))
+    warnings.push('Banco sem data_inicio.');
+  if (!columns.habitos?.includes('data_fim'))
+    warnings.push('Banco sem data_fim.');
   if (counts.habitos === 0) warnings.push('Nenhum hábito cadastrado.');
 
   const settings = await getSettingsMap();
@@ -3002,7 +3042,9 @@ async function buildDataDoctor() {
   );
 
   if (settings.last_auto_backup_error) {
-    warnings.push(`Backup automático falhou: ${settings.last_auto_backup_error}`);
+    warnings.push(
+      `Backup automático falhou: ${settings.last_auto_backup_error}`
+    );
   }
 
   const status = errors.length ? 'error' : warnings.length ? 'warning' : 'ok';
@@ -3047,7 +3089,9 @@ async function buildEndDayMarkdown(date) {
   const day = await getDayPayload(date, { includeInactiveWithLogs: true });
   const focus = await getFocusSummary(date);
 
-  const buildHabits = day.habits.filter((habit) => habit.habit_type === 'build');
+  const buildHabits = day.habits.filter(
+    (habit) => habit.habit_type === 'build'
+  );
   const reductionHabits = day.habits.filter(
     (habit) => habit.habit_type === 'reduction'
   );
@@ -3104,7 +3148,12 @@ ${day.mindset.notas ? day.mindset.notas : '_Sem nota registrada._'}
 
 function average(items) {
   if (!items.length) return 0;
-  return Math.round((items.reduce((sum, item) => sum + Number(item || 0), 0) / items.length) * 10) / 10;
+  return (
+    Math.round(
+      (items.reduce((sum, item) => sum + Number(item || 0), 0) / items.length) *
+        10
+    ) / 10
+  );
 }
 
 async function buildWeeklyReviewMarkdown(startDate) {
@@ -3120,9 +3169,15 @@ async function buildWeeklyReviewMarkdown(startDate) {
     days.push(await getDayPayload(date, { includeInactiveWithLogs: true }));
   }
 
-  const buildScores = days.map((day) => day.progress.buildScore).filter((value) => value > 0);
-  const reductionScores = days.map((day) => day.progress.reductionScore).filter((value) => value > 0);
-  const overallScores = days.map((day) => day.progress.overallScore).filter((value) => value > 0);
+  const buildScores = days
+    .map((day) => day.progress.buildScore)
+    .filter((value) => value > 0);
+  const reductionScores = days
+    .map((day) => day.progress.reductionScore)
+    .filter((value) => value > 0);
+  const overallScores = days
+    .map((day) => day.progress.overallScore)
+    .filter((value) => value > 0);
 
   const buildMap = new Map();
   const reductionMap = new Map();
@@ -3136,7 +3191,11 @@ async function buildWeeklyReviewMarkdown(startDate) {
   days.forEach((day) => {
     day.habits.forEach((habit) => {
       if (habit.habit_type === 'reduction') {
-        const item = reductionMap.get(habit.titulo) || { clean: 0, occurrences: 0, total: 0 };
+        const item = reductionMap.get(habit.titulo) || {
+          clean: 0,
+          occurrences: 0,
+          total: 0,
+        };
         item.total += 1;
         if (habit.occurrence) {
           item.occurrences += 1;
@@ -3160,7 +3219,9 @@ async function buildWeeklyReviewMarkdown(startDate) {
     });
 
     if (day.mindset.notas) {
-      notes.push(`- ${day.date}: ${day.mindset.notas.replace(/\n+/g, ' ').slice(0, 260)}`);
+      notes.push(
+        `- ${day.date}: ${day.mindset.notas.replace(/\n+/g, ' ').slice(0, 260)}`
+      );
     }
 
     ['energia', 'foco', 'motivacao', 'humor'].forEach((key) => {
@@ -3168,15 +3229,20 @@ async function buildWeeklyReviewMarkdown(startDate) {
     });
   });
 
-  const buildHighlights = Array.from(buildMap.entries())
-    .sort((a, b) => b[1].done - a[1].done)
-    .map(([name, item]) => `- ${name}: ${item.done}/${item.total}`)
-    .join('\n') || '- Sem hábitos Build na semana.';
+  const buildHighlights =
+    Array.from(buildMap.entries())
+      .sort((a, b) => b[1].done - a[1].done)
+      .map(([name, item]) => `- ${name}: ${item.done}/${item.total}`)
+      .join('\n') || '- Sem hábitos Build na semana.';
 
-  const reductionHighlights = Array.from(reductionMap.entries())
-    .sort((a, b) => b[1].clean - a[1].clean)
-    .map(([name, item]) => `- ${name}: ${item.clean}/${item.total} clean · ${item.occurrences} occurrences`)
-    .join('\n') || '- Sem hábitos Reduction na semana.';
+  const reductionHighlights =
+    Array.from(reductionMap.entries())
+      .sort((a, b) => b[1].clean - a[1].clean)
+      .map(
+        ([name, item]) =>
+          `- ${name}: ${item.clean}/${item.total} clean · ${item.occurrences} occurrences`
+      )
+      .join('\n') || '- Sem hábitos Reduction na semana.';
 
   return `# Weekly Review — ${start} to ${end}
 
@@ -3237,8 +3303,6 @@ async function maybeMarkFocusHabit(date) {
   return { marked: true, habitId: habit.id, title: habit.titulo };
 }
 
-
-
 app.get('/api/backup', async (request, response) => {
   try {
     if (!fs.existsSync(DB_PATH)) {
@@ -3263,13 +3327,20 @@ app.get('/api/backup', async (request, response) => {
     const backupValidation = await validateSQLiteBackupFile(backupPath);
 
     response.setHeader('X-Quiet-Progress-DB-Path', DB_PATH);
-    response.setHeader('X-Quiet-Progress-DB-Tables', backupValidation.tables.join(','));
+    response.setHeader(
+      'X-Quiet-Progress-DB-Tables',
+      backupValidation.tables.join(',')
+    );
 
-    response.download(backupPath, `quiet_progress_${todayISO()}.db`, (error) => {
-      if (error) {
-        console.error('[Backup] Falha no download:', error);
+    response.download(
+      backupPath,
+      `quiet_progress_${todayISO()}.db`,
+      (error) => {
+        if (error) {
+          console.error('[Backup] Falha no download:', error);
+        }
       }
-    });
+    );
   } catch (error) {
     console.error('[Backup] Erro:', error);
     response.status(500).json({
@@ -3318,7 +3389,9 @@ app.post(
         ok: true,
         message: 'Restore concluído. Banco validado e recarregado.',
         requiresRestart: false,
-        legacyHabitTypeMigration: Boolean(lastMigrationInfo.legacyHabitTypeMigration),
+        legacyHabitTypeMigration: Boolean(
+          lastMigrationInfo.legacyHabitTypeMigration
+        ),
         dbPath: DB_PATH,
         restoredTables: restoredValidation.tables,
         uploadedTables: uploadedValidation.tables,
@@ -3337,9 +3410,15 @@ app.post(
           removeSQLiteSidecars(DB_PATH);
           connectDatabase();
           await initDatabase();
-          console.warn('[Restore] Rollback automático aplicado:', safetyBackupPath);
+          console.warn(
+            '[Restore] Rollback automático aplicado:',
+            safetyBackupPath
+          );
         } catch (rollbackError) {
-          console.error('[Restore] Falha no rollback automático:', rollbackError);
+          console.error(
+            '[Restore] Falha no rollback automático:',
+            rollbackError
+          );
         }
       } else {
         try {
@@ -3363,7 +3442,6 @@ app.post(
   }
 );
 
-
 function uploadErrorHandler(error, request, response, next) {
   if (!error) {
     next();
@@ -3385,8 +3463,12 @@ function uploadErrorHandler(error, request, response, next) {
 
 app.use(uploadErrorHandler);
 
+app.use((request, response, next) => {
+  if (request.path.startsWith('/api/')) {
+    next();
+    return;
+  }
 
-app.get('*', (request, response) => {
   response.sendFile(path.join(__dirname, '..', 'public', 'index.html'));
 });
 
@@ -3410,7 +3492,6 @@ process.on('SIGINT', () => {
 process.on('SIGTERM', () => {
   gracefulShutdown('SIGTERM');
 });
-
 
 initDatabase()
   .then((migrationInfo) => {
