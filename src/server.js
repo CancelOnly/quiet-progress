@@ -2556,6 +2556,39 @@ app.get('/api/day/:date/markdown', async (request, response) => {
   }
 });
 
+app.get('/api/reviews/day/:date', async (request, response) => {
+  try {
+    response.json(await buildReviewDay(request.params.date));
+  } catch (error) {
+    console.error(error);
+    response.status(500).json({
+      error: error.message || 'Erro ao gerar Daily Review.',
+    });
+  }
+});
+
+app.get('/api/reviews/week/:date', async (request, response) => {
+  try {
+    response.json(await buildReviewWeek(request.params.date));
+  } catch (error) {
+    console.error(error);
+    response.status(500).json({
+      error: error.message || 'Erro ao gerar Weekly Review.',
+    });
+  }
+});
+
+app.get('/api/reviews/month/:month', async (request, response) => {
+  try {
+    response.json(await buildReviewMonth(request.params.month));
+  } catch (error) {
+    console.error(error);
+    response.status(500).json({
+      error: error.message || 'Erro ao gerar Monthly Review.',
+    });
+  }
+});
+
 app.get('/api/day/:date/end-day', async (request, response) => {
   try {
     const date = normalizeDate(request.params.date);
@@ -2618,16 +2651,12 @@ app.post('/api/day/:date/end-day', async (request, response) => {
 
 app.get('/api/week/:date/review', async (request, response) => {
   try {
-    const date = normalizeDate(request.params.date);
-    const weekStart = getWeekStartISO(date);
-    const weekEnd = addDaysISO(weekStart, 6);
-    const markdown = await buildWeeklyReviewMarkdown(weekStart);
+    const payload = await buildReviewWeek(request.params.date);
 
     response.json({
-      ok: true,
-      weekStart,
-      weekEnd,
-      markdown,
+      ...payload,
+      weekStart: payload.start,
+      weekEnd: payload.end,
     });
   } catch (error) {
     console.error(error);
@@ -3365,6 +3394,221 @@ ${reductionHighlights}
 ${notes.length ? notes.join('\n') : '_Sem notas na semana._'}
 `;
 }
+
+
+async function getFocusRangeSummary(start, end) {
+  const row = await get(
+    `
+    SELECT
+      COUNT(*) AS completed,
+      COALESCE(SUM(duration_minutes), 0) AS minutes
+    FROM focus_sessions
+    WHERE data_ref BETWEEN ? AND ?
+      AND completed = 1
+    `,
+    [start, end]
+  ).catch(() => ({ completed: 0, minutes: 0 }));
+
+  return {
+    completed: Number(row?.completed || 0),
+    minutes: Number(row?.minutes || 0),
+  };
+}
+
+function formatReviewMonthTitle(monthValue) {
+  const [year, month] = String(monthValue).split('-').map(Number);
+
+  if (!year || !month) return String(monthValue);
+
+  return new Date(year, month - 1, 1).toLocaleDateString('pt-BR', {
+    month: 'long',
+    year: 'numeric',
+  });
+}
+
+async function buildReviewDay(dateValue) {
+  const date = normalizeDate(dateValue);
+  const markdown = await buildEndDayMarkdown(date);
+  const title = `Daily Review — ${date}`;
+
+  return {
+    ok: true,
+    type: 'day',
+    start: date,
+    end: date,
+    title,
+    filename: `quiet-progress-day-${date}.md`,
+    markdown,
+  };
+}
+
+async function buildReviewWeek(dateValue) {
+  const date = normalizeDate(dateValue);
+  const start = getWeekStartISO(date);
+  const end = addDaysISO(start, 6);
+  const markdown = await buildWeeklyReviewMarkdown(start);
+  const title = `Weekly Review — ${start} to ${end}`;
+
+  return {
+    ok: true,
+    type: 'week',
+    start,
+    end,
+    title,
+    filename: `quiet-progress-week-${start}_to_${end}.md`,
+    markdown,
+  };
+}
+
+async function buildReviewMonth(monthValue) {
+  const month = String(monthValue || '').trim();
+
+  if (!/^\d{4}-\d{2}$/.test(month)) {
+    throw new Error('Mês inválido. Use YYYY-MM.');
+  }
+
+  const dashboard = await getDashboardMonth(month);
+  const range = dashboard.range;
+  const stats = dashboard.stats || {};
+  const focus = await getFocusRangeSummary(range.start, range.end);
+
+  const tasksRow = await get(
+    `
+    SELECT
+      COUNT(*) AS total,
+      SUM(CASE WHEN status = 'CONCLUIDO' THEN 1 ELSE 0 END) AS completed
+    FROM tarefas
+    WHERE data_ref BETWEEN ? AND ?
+      AND ativo = 1
+    `,
+    [range.start, range.end]
+  );
+
+  const mindsetRows = await all(
+    `
+    SELECT *
+    FROM mindset
+    WHERE data_ref BETWEEN ? AND ?
+    ORDER BY data_ref ASC
+    `,
+    [range.start, range.end]
+  );
+
+  const avgValue = (key) => {
+    const values = mindsetRows
+      .map((row) => Number(row[key] || 0))
+      .filter((value) => value > 0);
+
+    return average(values);
+  };
+
+  const notes = mindsetRows
+    .filter((row) => String(row.notas || '').trim())
+    .map(
+      (row) =>
+        `- ${row.data_ref}: ${String(row.notas || '')
+          .replace(/\n+/g, ' ')
+          .slice(0, 280)}`
+    );
+
+  const habitStats = stats.habitStats || [];
+  const buildStats = habitStats
+    .filter((item) => item.habit_type === 'build')
+    .sort((a, b) => Number(b.percent || 0) - Number(a.percent || 0));
+  const reductionStats = habitStats
+    .filter((item) => item.habit_type === 'reduction')
+    .sort((a, b) => Number(b.occurrences || 0) - Number(a.occurrences || 0));
+
+  const buildPerformance = buildStats.length
+    ? buildStats
+        .map(
+          (item) =>
+            `- ${item.titulo}: ${item.percent}% completion · ${item.completedDays}/${item.possibleDays} completed`
+        )
+        .join('\n')
+    : '- Nenhum hábito Build no mês.';
+
+  const reductionPerformance = reductionStats.length
+    ? reductionStats
+        .map(
+          (item) =>
+            `- ${item.titulo}: ${item.occurrences} occurrences · ${item.cleanDays}/${item.possibleDays} clean days · ${item.percent}% clean rate`
+        )
+        .join('\n')
+    : '- Nenhum hábito Reduction no mês.';
+
+  const topBuildStreaks =
+    stats.bestStreaks?.build?.length
+      ? stats.bestStreaks.build
+          .map((item) => `- ${item.titulo}: ${item.bestStreak} days best streak`)
+          .join('\n')
+      : '- Nenhum best build streak.';
+
+  const bestCleanStreaks =
+    stats.bestStreaks?.reduction?.length
+      ? stats.bestStreaks.reduction
+          .map((item) => `- ${item.titulo}: ${item.bestStreak} clean days`)
+          .join('\n')
+      : '- Nenhum best clean streak.';
+
+  const tasksTotal = Number(tasksRow?.total || 0);
+  const tasksCompleted = Number(tasksRow?.completed || 0);
+  const tasksPending = Math.max(0, tasksTotal - tasksCompleted);
+
+  const title = `Monthly Review — ${month}`;
+  const markdown = `# ${title}
+
+## Period
+- Month: ${formatReviewMonthTitle(month)}
+- Range: ${range.start} to ${range.end}
+
+## Scores
+- Build Score: ${stats.buildScore || 0}%
+- Reduction Score: ${stats.reductionScore || 0}%
+- Overall Score: ${stats.overallScore || 0}%
+
+## Top Streaks
+${topBuildStreaks}
+
+## Best Clean Streaks
+${bestCleanStreaks}
+
+## Build Habits Performance
+${buildPerformance}
+
+## Reduction Occurrences
+${reductionPerformance}
+
+## Focus
+- Pomodoros completed: ${focus.completed}
+- Focus minutes: ${focus.minutes}
+
+## Tasks
+- Completed: ${tasksCompleted}
+- Pending: ${tasksPending}
+- Total: ${tasksTotal}
+
+## Mindset Average
+- Energy: ${avgValue('energia')}/5
+- Focus: ${avgValue('foco')}/5
+- Motivation: ${avgValue('motivacao')}/5
+- Mood: ${avgValue('humor')}/5
+
+## Notes / Check-ins
+${notes.length ? notes.join('\n') : '_Sem notas no mês._'}
+`;
+
+  return {
+    ok: true,
+    type: 'month',
+    start: range.start,
+    end: range.end,
+    title,
+    filename: `quiet-progress-month-${month}.md`,
+    markdown,
+  };
+}
+
 
 async function maybeMarkFocusHabit(date) {
   const habit = await get(
