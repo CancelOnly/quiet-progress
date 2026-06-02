@@ -456,21 +456,33 @@
               </div>
 
               <div class="review-period-row">
-                <label id="reviewDateWrap">Período
+                <label id="reviewDateWrap">Data
                   <input id="reviewDateInput" type="date" />
                 </label>
-                <label id="reviewMonthWrap" hidden>Período
+                <label id="reviewMonthWrap" hidden>Mês
                   <input id="reviewMonthInput" type="month" />
                 </label>
               </div>
 
-              <div class="review-quick-actions" aria-label="Atalhos de período">
-                <button type="button" data-review-quick="today">Hoje</button>
-                <button type="button" data-review-quick="this-week">Esta semana</button>
-                <button type="button" data-review-quick="last-week">Semana passada</button>
-                <button type="button" data-review-quick="this-month">Este mês</button>
-                <button type="button" data-review-quick="last-month">Mês passado</button>
+              <div class="review-period-help" id="reviewPeriodHelp">Daily Review — hoje</div>
+
+              <div class="review-period-nav" aria-label="Navegação de período">
+                <button type="button" id="reviewPrevPeriodBtn">← Anterior</button>
+                <button type="button" id="reviewCurrentPeriodBtn">Atual</button>
+                <button type="button" id="reviewNextPeriodBtn">Próximo →</button>
               </div>
+
+              <details class="review-shortcuts">
+                <summary>Atalhos</summary>
+                <div class="review-shortcut-menu" aria-label="Atalhos de período">
+                  <button type="button" data-review-quick="today">Hoje</button>
+                  <button type="button" data-review-quick="yesterday">Ontem</button>
+                  <button type="button" data-review-quick="this-week">Esta semana</button>
+                  <button type="button" data-review-quick="last-week">Semana passada</button>
+                  <button type="button" data-review-quick="this-month">Este mês</button>
+                  <button type="button" data-review-quick="last-month">Mês passado</button>
+                </div>
+              </details>
 
               <div class="review-preview-meta" id="reviewPreviewMeta">Preview vazio.</div>
               <pre class="review-markdown-preview" id="reviewMarkdownPreview">Selecione um período para gerar o preview.</pre>
@@ -481,7 +493,7 @@
               </div>
             </div>
 
-<div class="history-list" id="journalList"></div>
+            <div class="history-list" id="journalList"></div>
             <div class="history-detail" id="journalDetail"></div>
           </section>
         </section>

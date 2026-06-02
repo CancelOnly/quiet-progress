@@ -1,3 +1,5 @@
+[hidden] { display: none !important; }
+
 :root {
   --bg: #000000;
   --panel: #111111;
@@ -5222,4 +5224,279 @@ body.focus-mode .lockin-time {
   overflow: auto;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+
+
+/* ==========================================================================
+   V1.3.6 — JOURNAL REVIEW UX + MOBILE HABIT ACTIONS
+   ========================================================================== */
+
+#view-journal .panel-header.compact-header {
+  align-items: flex-start;
+  gap: 14px;
+}
+
+#view-journal .history-filters {
+  align-items: end;
+}
+
+.review-export-card {
+  margin: 18px 0 20px;
+  padding: 16px;
+  border-radius: 22px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.038), rgba(255, 255, 255, 0.018)),
+    #070707;
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.055),
+    0 18px 52px rgba(0, 0, 0, 0.22);
+}
+
+.review-export-head {
+  margin-bottom: 12px;
+}
+
+.review-export-head strong {
+  font-size: 16px;
+}
+
+.review-type-toggle {
+  margin-bottom: 12px;
+}
+
+.review-period-row {
+  margin-bottom: 8px;
+}
+
+.review-period-row label {
+  letter-spacing: 0.1em;
+}
+
+.review-period-help {
+  min-height: 20px;
+  margin: 4px 0 12px;
+  color: var(--focus);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.review-period-nav {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.review-period-nav button,
+.review-shortcut-menu button {
+  min-height: 34px;
+  border: 0;
+  border-radius: 999px;
+  padding: 0 11px;
+  color: var(--muted-2);
+  background: rgba(255, 255, 255, 0.035);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.045);
+  font-size: 11px;
+  font-weight: 950;
+  cursor: pointer;
+}
+
+.review-period-nav button:hover,
+.review-shortcut-menu button:hover {
+  color: var(--success);
+  box-shadow:
+    0 0 14px rgba(222, 255, 154, 0.08),
+    inset 0 0 0 1px rgba(222, 255, 154, 0.15);
+}
+
+.review-quick-actions {
+  display: none !important;
+}
+
+.review-shortcuts {
+  margin-bottom: 12px;
+}
+
+.review-shortcuts summary {
+  width: fit-content;
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 950;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.review-shortcut-menu {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.review-markdown-preview {
+  max-height: 320px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.habit-mobile-menu-btn {
+  display: none;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border: 0;
+  border-radius: 999px;
+  color: var(--muted-2);
+  background: transparent;
+  font-size: 20px;
+  font-weight: 950;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.habit-mobile-menu-btn:hover {
+  color: var(--success);
+  background: rgba(222, 255, 154, 0.055);
+}
+
+.habit-mobile-action-sheet {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.habit-mobile-action-sheet button {
+  min-height: 44px;
+  border: 0;
+  border-radius: 14px;
+  padding: 0 14px;
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.045);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.055);
+  font-weight: 900;
+  text-align: left;
+}
+
+.habit-mobile-action-sheet button[data-habit-action='delete'] {
+  color: var(--danger);
+}
+
+@media (max-width: 768px) {
+  #view-journal .panel-header.compact-header {
+    display: grid;
+  }
+
+  #view-journal .history-filters {
+    width: 100%;
+  }
+
+  .review-period-nav {
+    grid-template-columns: 1fr;
+  }
+
+  .review-type-toggle {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .review-markdown-preview {
+    max-height: 260px;
+  }
+
+  .qpmatrix-habit .habit-title-row {
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    gap: 7px;
+  }
+
+  .habit-mobile-menu-btn {
+    display: inline-grid;
+  }
+
+  .qpmatrix-habit .habit-row-actions {
+    display: none !important;
+  }
+
+  .qpmatrix-habit small {
+    display: block;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}
+
+
+/* ==========================================================================
+   V1.3.6.1 — REVIEW NAV HOTFIX
+   ========================================================================== */
+
+.review-period-help {
+  min-height: 20px;
+  margin: 4px 0 12px;
+  color: var(--focus);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.review-period-nav {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.review-period-nav button {
+  min-height: 34px;
+  border: 0;
+  border-radius: 999px;
+  padding: 0 11px;
+  color: var(--muted-2);
+  background: rgba(255, 255, 255, 0.035);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.045);
+  font-size: 11px;
+  font-weight: 950;
+  cursor: pointer;
+}
+
+.review-period-nav button:hover {
+  color: var(--success);
+  box-shadow:
+    0 0 14px rgba(222, 255, 154, 0.08),
+    inset 0 0 0 1px rgba(222, 255, 154, 0.15);
+}
+
+.review-quick-actions {
+  display: none !important;
+}
+
+@media (max-width: 768px) {
+  .review-period-nav {
+    grid-template-columns: 1fr;
+  }
+}
+
+
+
+/* ==========================================================================
+   V1.3.6.2 — UX MICRO POLISH
+   ========================================================================== */
+
+.modal-overlay.habit-action-sheet-open #modalCancelBtn {
+  display: none;
+}
+
+.modal-overlay.habit-action-sheet-open #modalConfirmBtn {
+  color: var(--muted-2);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.review-period-help,
+.review-preview-meta {
+  letter-spacing: 0;
+}
+
+.review-preview-meta {
+  opacity: 0.88;
 }
