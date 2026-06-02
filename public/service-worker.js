@@ -1,4 +1,4 @@
-const CACHE_VERSION = 'quiet-progress-shell-v8-reorder-polish';
+const CACHE_VERSION = 'quiet-progress-shell-v9-review-export';
 const APP_SHELL_ASSETS = [
   '/manifest.json',
   '/styles.css',

@@ -17,6 +17,12 @@ const state = {
     previousIds: [],
     saving: false,
   },
+  reviewExport: {
+    type: 'day',
+    date: toISODate(new Date()),
+    month: toISODate(new Date()).slice(0, 7),
+    payload: null,
+  },
 };
 
 const charts = {
@@ -119,6 +125,16 @@ const elements = {
   journalSearch: document.getElementById('journalSearch'),
   journalList: document.getElementById('journalList'),
   journalDetail: document.getElementById('journalDetail'),
+  reviewTypeButtons: Array.from(document.querySelectorAll('.review-type-btn')),
+  reviewDateWrap: document.getElementById('reviewDateWrap'),
+  reviewMonthWrap: document.getElementById('reviewMonthWrap'),
+  reviewDateInput: document.getElementById('reviewDateInput'),
+  reviewMonthInput: document.getElementById('reviewMonthInput'),
+  reviewQuickButtons: Array.from(document.querySelectorAll('[data-review-quick]')),
+  reviewPreviewMeta: document.getElementById('reviewPreviewMeta'),
+  reviewMarkdownPreview: document.getElementById('reviewMarkdownPreview'),
+  reviewCopyMarkdownBtn: document.getElementById('reviewCopyMarkdownBtn'),
+  reviewDownloadMarkdownBtn: document.getElementById('reviewDownloadMarkdownBtn'),
 
   backupBtn: document.getElementById('backupBtn'),
   sidebarBackupBtn: document.getElementById('sidebarBackupBtn'),
@@ -382,6 +398,9 @@ async function refreshAll() {
 async function loadDashboard() {
   elements.monthPicker.value = state.currentMonth;
   elements.journalMonthFilter.value = state.currentMonth;
+  state.reviewExport.date = state.selectedDate;
+  state.reviewExport.month = state.currentMonth;
+  updateReviewInputs();
 
   const dashboard = await api(`/dashboard?month=${state.currentMonth}&date=${state.selectedDate}`);
   const stats = await api(`/stats?month=${state.currentMonth}`);
@@ -620,13 +639,141 @@ async function downloadEndDayMarkdown() {
   );
 }
 
-async function fetchWeeklyReviewMarkdown() {
-  const payload = await api(`/week/${state.selectedDate}/review`);
+function shiftMonthValue(monthValue, delta) {
+  const [year, month] = monthValue.split('-').map(Number);
+  return toISODate(new Date(year, month - 1 + delta, 1)).slice(0, 7);
+}
 
-  if (elements.weeklyReviewRange) {
-    elements.weeklyReviewRange.textContent = `${payload.weekStart} → ${payload.weekEnd}`;
+function setReviewType(type) {
+  state.reviewExport.type = ['day', 'week', 'month'].includes(type) ? type : 'day';
+  state.reviewExport.payload = null;
+
+  elements.reviewTypeButtons.forEach((button) => {
+    button.classList.toggle('active', button.dataset.reviewType === state.reviewExport.type);
+  });
+
+  const isMonth = state.reviewExport.type === 'month';
+  if (elements.reviewDateWrap) elements.reviewDateWrap.hidden = isMonth;
+  if (elements.reviewMonthWrap) elements.reviewMonthWrap.hidden = !isMonth;
+
+  updateReviewInputs();
+  loadReviewPreview().catch((error) => {
+    console.error(error);
+    showToast('Erro ao gerar preview.');
+  });
+}
+
+function updateReviewInputs() {
+  if (elements.reviewDateInput) {
+    elements.reviewDateInput.value = state.reviewExport.date || state.selectedDate;
   }
 
+  if (elements.reviewMonthInput) {
+    elements.reviewMonthInput.value = state.reviewExport.month || state.currentMonth;
+  }
+}
+
+function getReviewEndpoint() {
+  const type = state.reviewExport.type;
+
+  if (type === 'month') {
+    return `/reviews/month/${state.reviewExport.month || state.currentMonth}`;
+  }
+
+  const date = state.reviewExport.date || state.selectedDate;
+
+  if (type === 'week') {
+    return `/reviews/week/${date}`;
+  }
+
+  return `/reviews/day/${date}`;
+}
+
+async function loadReviewPreview() {
+  if (!elements.reviewMarkdownPreview || !elements.reviewPreviewMeta) return;
+
+  const endpoint = getReviewEndpoint();
+  elements.reviewPreviewMeta.textContent = 'Gerando preview...';
+  elements.reviewMarkdownPreview.textContent = 'Carregando...';
+
+  const payload = await api(endpoint);
+  state.reviewExport.payload = payload;
+
+  elements.reviewPreviewMeta.textContent = `${payload.title} · ${payload.start} → ${payload.end}`;
+  elements.reviewMarkdownPreview.textContent = payload.markdown || '_Sem conteúdo._';
+
+  return payload;
+}
+
+async function getReviewPayload() {
+  if (!state.reviewExport.payload) {
+    return loadReviewPreview();
+  }
+
+  return state.reviewExport.payload;
+}
+
+async function copyReviewMarkdown() {
+  const payload = await getReviewPayload();
+  await navigator.clipboard.writeText(payload.markdown || '');
+  showToast('Markdown copiado.');
+}
+
+async function downloadReviewMarkdown() {
+  const payload = await getReviewPayload();
+  downloadTextFile(
+    payload.filename || `quiet-progress-${payload.type}-${payload.start}.md`,
+    payload.markdown || '',
+    'text/markdown'
+  );
+  showToast('Markdown baixado.');
+}
+
+function applyReviewQuickAction(action) {
+  const today = state.todayDate;
+  const thisWeekStart = getWeekStart(today);
+
+  if (action === 'today') {
+    state.reviewExport.type = 'day';
+    state.reviewExport.date = today;
+    state.reviewExport.month = today.slice(0, 7);
+  }
+
+  if (action === 'this-week') {
+    state.reviewExport.type = 'week';
+    state.reviewExport.date = thisWeekStart;
+    state.reviewExport.month = thisWeekStart.slice(0, 7);
+  }
+
+  if (action === 'last-week') {
+    const lastWeekStart = addDays(thisWeekStart, -7);
+    state.reviewExport.type = 'week';
+    state.reviewExport.date = lastWeekStart;
+    state.reviewExport.month = lastWeekStart.slice(0, 7);
+  }
+
+  if (action === 'this-month') {
+    state.reviewExport.type = 'month';
+    state.reviewExport.month = today.slice(0, 7);
+    state.reviewExport.date = today;
+  }
+
+  if (action === 'last-month') {
+    const lastMonth = shiftMonthValue(today.slice(0, 7), -1);
+    state.reviewExport.type = 'month';
+    state.reviewExport.month = lastMonth;
+    state.reviewExport.date = `${lastMonth}-01`;
+  }
+
+  setReviewType(state.reviewExport.type);
+}
+
+async function fetchWeeklyReviewMarkdown() {
+  state.reviewExport.type = 'week';
+  state.reviewExport.date = state.selectedDate;
+  updateReviewInputs();
+  const payload = await api(`/reviews/week/${state.selectedDate}`);
+  state.reviewExport.payload = payload;
   return payload.markdown;
 }
 
@@ -637,13 +784,14 @@ async function copyWeeklyReviewMarkdown() {
 }
 
 async function downloadWeeklyReviewMarkdown() {
-  const payload = await api(`/week/${state.selectedDate}/review`);
+  const payload = await api(`/reviews/week/${state.selectedDate}`);
   downloadTextFile(
-    `${payload.weekStart}-to-${payload.weekEnd}-WeeklyReview.md`,
+    payload.filename || `quiet-progress-week-${payload.start}_to_${payload.end}.md`,
     payload.markdown,
     'text/markdown'
   );
 }
+
 
 
 function renderTracker() {
@@ -1922,6 +2070,13 @@ async function loadJournal() {
   elements.journalList.innerHTML = payload.items.length
     ? payload.items.map(renderJournalCard).join('')
     : '<div class="empty-state">Nenhum check-in neste mês.</div>';
+
+  if (!state.reviewExport.payload) {
+    state.reviewExport.date = state.selectedDate;
+    state.reviewExport.month = state.currentMonth;
+    updateReviewInputs();
+    await loadReviewPreview();
+  }
 }
 
 function renderJournalCard(item) {
@@ -2756,6 +2911,27 @@ function attachEvents() {
 
   elements.journalMonthFilter.addEventListener('change', loadJournal);
   elements.journalSearch.addEventListener('input', debounce(loadJournal, 250));
+  elements.reviewTypeButtons.forEach((button) => {
+    button.addEventListener('click', () => setReviewType(button.dataset.reviewType));
+  });
+  elements.reviewDateInput?.addEventListener('change', () => {
+    state.reviewExport.date = elements.reviewDateInput.value || state.selectedDate;
+    state.reviewExport.month = state.reviewExport.date.slice(0, 7);
+    state.reviewExport.payload = null;
+    loadReviewPreview();
+  });
+  elements.reviewMonthInput?.addEventListener('change', () => {
+    state.reviewExport.month = elements.reviewMonthInput.value || state.currentMonth;
+    state.reviewExport.date = `${state.reviewExport.month}-01`;
+    state.reviewExport.payload = null;
+    loadReviewPreview();
+  });
+  elements.reviewQuickButtons.forEach((button) => {
+    button.addEventListener('click', () => applyReviewQuickAction(button.dataset.reviewQuick));
+  });
+  elements.reviewCopyMarkdownBtn?.addEventListener('click', copyReviewMarkdown);
+  elements.reviewDownloadMarkdownBtn?.addEventListener('click', downloadReviewMarkdown);
+
 
   elements.backupBtn.addEventListener('click', downloadBackup);
   elements.sidebarBackupBtn.addEventListener('click', downloadBackup);
@@ -2861,6 +3037,9 @@ async function init() {
 
   elements.monthPicker.value = state.currentMonth;
   elements.journalMonthFilter.value = state.currentMonth;
+  state.reviewExport.date = state.selectedDate;
+  state.reviewExport.month = state.currentMonth;
+  updateReviewInputs();
 
   try {
     await loadDashboard();

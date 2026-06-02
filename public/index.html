@@ -441,18 +441,47 @@
               </div>
             </div>
 
-            <div class="weekly-review-box" id="weeklyReviewBox">
-              <div>
-                <strong>Weekly Review</strong>
-                <span id="weeklyReviewRange">Semana atual</span>
+            <div class="review-export-card" id="reviewExportCard">
+              <div class="review-export-head">
+                <div>
+                  <strong>Review & Export</strong>
+                  <span id="reviewExportSubtitle">Gere Markdown por dia, semana ou mês.</span>
+                </div>
               </div>
-              <div class="overview-actions">
-                <button class="status-btn" id="copyWeeklyReviewBtn" type="button">Copiar Weekly Review</button>
-                <button class="status-btn" id="downloadWeeklyReviewBtn" type="button">Baixar .md</button>
+
+              <div class="review-type-toggle" role="group" aria-label="Tipo de resumo">
+                <button class="review-type-btn active" type="button" data-review-type="day">Dia</button>
+                <button class="review-type-btn" type="button" data-review-type="week">Semana</button>
+                <button class="review-type-btn" type="button" data-review-type="month">Mês</button>
+              </div>
+
+              <div class="review-period-row">
+                <label id="reviewDateWrap">Período
+                  <input id="reviewDateInput" type="date" />
+                </label>
+                <label id="reviewMonthWrap" hidden>Período
+                  <input id="reviewMonthInput" type="month" />
+                </label>
+              </div>
+
+              <div class="review-quick-actions" aria-label="Atalhos de período">
+                <button type="button" data-review-quick="today">Hoje</button>
+                <button type="button" data-review-quick="this-week">Esta semana</button>
+                <button type="button" data-review-quick="last-week">Semana passada</button>
+                <button type="button" data-review-quick="this-month">Este mês</button>
+                <button type="button" data-review-quick="last-month">Mês passado</button>
+              </div>
+
+              <div class="review-preview-meta" id="reviewPreviewMeta">Preview vazio.</div>
+              <pre class="review-markdown-preview" id="reviewMarkdownPreview">Selecione um período para gerar o preview.</pre>
+
+              <div class="review-export-actions">
+                <button class="status-btn" id="reviewCopyMarkdownBtn" type="button">Copiar Markdown</button>
+                <button class="status-btn" id="reviewDownloadMarkdownBtn" type="button">Baixar .md</button>
               </div>
             </div>
 
-            <div class="history-list" id="journalList"></div>
+<div class="history-list" id="journalList"></div>
             <div class="history-detail" id="journalDetail"></div>
           </section>
         </section>
