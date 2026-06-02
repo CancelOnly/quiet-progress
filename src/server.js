@@ -3339,9 +3339,7 @@ async function buildWeeklyReviewMarkdown(startDate) {
     });
 
     if (day.mindset.notas) {
-      notes.push(
-        `- ${day.date}: ${day.mindset.notas.replace(/\n+/g, ' ').slice(0, 260)}`
-      );
+      notes.push(formatMarkdownNote(day.date, day.mindset.notas));
     }
 
     ['energia', 'foco', 'motivacao', 'humor'].forEach((key) => {
@@ -3391,10 +3389,27 @@ ${reductionHighlights}
 - Mood: ${average(mindset.humor)}/5
 
 ## Notes
-${notes.length ? notes.join('\n') : '_Sem notas na semana._'}
+${notes.length ? notes.join('\n\n') : '_Sem notas na semana._'}
 `;
 }
 
+
+
+function formatMarkdownNote(date, note) {
+  const clean = String(note || '').trim();
+  if (!clean) return '';
+  return `### ${date}
+
+${clean}`;
+}
+
+function formatMarkdownNotesSection(rows) {
+  const notes = rows
+    .map((row) => formatMarkdownNote(row.data_ref, row.notas))
+    .filter(Boolean);
+
+  return notes.length ? notes.join('\n\n') : '_Sem notas no período._';
+}
 
 async function getFocusRangeSummary(start, end) {
   const row = await get(
@@ -3502,14 +3517,7 @@ async function buildReviewMonth(monthValue) {
     return average(values);
   };
 
-  const notes = mindsetRows
-    .filter((row) => String(row.notas || '').trim())
-    .map(
-      (row) =>
-        `- ${row.data_ref}: ${String(row.notas || '')
-          .replace(/\n+/g, ' ')
-          .slice(0, 280)}`
-    );
+  const notesMarkdown = formatMarkdownNotesSection(mindsetRows);
 
   const habitStats = stats.habitStats || [];
   const buildStats = habitStats
@@ -3595,7 +3603,7 @@ ${reductionPerformance}
 - Mood: ${avgValue('humor')}/5
 
 ## Notes / Check-ins
-${notes.length ? notes.join('\n') : '_Sem notas no mês._'}
+${notesMarkdown}
 `;
 
   return {

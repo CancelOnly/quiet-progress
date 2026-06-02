@@ -23,6 +23,7 @@ const state = {
     month: toISODate(new Date()).slice(0, 7),
     payload: null,
   },
+  currentReview: null,
 };
 
 const charts = {
@@ -292,15 +293,55 @@ function showToast(message) {
 
 
 function downloadTextFile(filename, content, mime = 'text/plain') {
-  const blob = new Blob([content], { type: `${mime};charset=utf-8` });
+  const safeContent = String(content ?? '');
+  const blob = new Blob([safeContent], { type: `${mime};charset=utf-8` });
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement('a');
+
   anchor.href = url;
   anchor.download = filename;
+  anchor.rel = 'noopener';
   document.body.appendChild(anchor);
   anchor.click();
   anchor.remove();
-  URL.revokeObjectURL(url);
+
+  window.setTimeout(() => URL.revokeObjectURL(url), 250);
+}
+
+async function copyTextRobust(text) {
+  const value = String(text ?? '');
+
+  if (!value.trim()) {
+    throw new Error('Nada para copiar.');
+  }
+
+  if (navigator.clipboard?.writeText && window.isSecureContext) {
+    await navigator.clipboard.writeText(value);
+    return true;
+  }
+
+  const textarea = document.createElement('textarea');
+  textarea.value = value;
+  textarea.setAttribute('readonly', '');
+  textarea.style.position = 'fixed';
+  textarea.style.top = '-9999px';
+  textarea.style.left = '-9999px';
+  textarea.style.opacity = '0';
+
+  document.body.appendChild(textarea);
+  textarea.focus();
+  textarea.select();
+  textarea.setSelectionRange(0, textarea.value.length);
+
+  try {
+    const ok = document.execCommand('copy');
+    if (!ok) {
+      throw new Error('execCommand copy retornou false.');
+    }
+    return true;
+  } finally {
+    textarea.remove();
+  }
 }
 
 
@@ -626,8 +667,13 @@ async function closeDay() {
 
 async function copyEndDayMarkdown() {
   const markdown = await fetchEndDayMarkdown(false);
-  await navigator.clipboard.writeText(markdown);
-  showToast('Markdown do fechamento copiado.');
+  try {
+    await copyTextRobust(markdown);
+    showToast('Markdown do fechamento copiado.');
+  } catch (error) {
+    console.warn('[Markdown] Falha ao copiar fechamento:', error);
+    showToast('Não foi possível copiar. Use baixar .md.');
+  }
 }
 
 async function downloadEndDayMarkdown() {
@@ -647,6 +693,7 @@ function shiftMonthValue(monthValue, delta) {
 function setReviewType(type) {
   state.reviewExport.type = ['day', 'week', 'month'].includes(type) ? type : 'day';
   state.reviewExport.payload = null;
+  state.currentReview = null;
 
   elements.reviewTypeButtons.forEach((button) => {
     button.classList.toggle('active', button.dataset.reviewType === state.reviewExport.type);
@@ -698,6 +745,7 @@ async function loadReviewPreview() {
 
   const payload = await api(endpoint);
   state.reviewExport.payload = payload;
+  state.currentReview = payload;
 
   elements.reviewPreviewMeta.textContent = `${payload.title} · ${payload.start} → ${payload.end}`;
   elements.reviewMarkdownPreview.textContent = payload.markdown || '_Sem conteúdo._';
@@ -706,26 +754,34 @@ async function loadReviewPreview() {
 }
 
 async function getReviewPayload() {
-  if (!state.reviewExport.payload) {
+  if (!state.currentReview?.markdown) {
     return loadReviewPreview();
   }
 
-  return state.reviewExport.payload;
+  return state.currentReview;
 }
 
 async function copyReviewMarkdown() {
   const payload = await getReviewPayload();
-  await navigator.clipboard.writeText(payload.markdown || '');
-  showToast('Markdown copiado.');
+
+  try {
+    await copyTextRobust(payload.markdown || '');
+    showToast('Markdown copiado.');
+  } catch (error) {
+    console.warn('[Markdown] Falha ao copiar:', error);
+    showToast('Não foi possível copiar. Use baixar .md.');
+  }
 }
 
 async function downloadReviewMarkdown() {
   const payload = await getReviewPayload();
+
   downloadTextFile(
     payload.filename || `quiet-progress-${payload.type}-${payload.start}.md`,
     payload.markdown || '',
     'text/markdown'
   );
+
   showToast('Markdown baixado.');
 }
 
@@ -765,6 +821,7 @@ function applyReviewQuickAction(action) {
     state.reviewExport.date = `${lastMonth}-01`;
   }
 
+  state.currentReview = null;
   setReviewType(state.reviewExport.type);
 }
 
@@ -779,8 +836,13 @@ async function fetchWeeklyReviewMarkdown() {
 
 async function copyWeeklyReviewMarkdown() {
   const markdown = await fetchWeeklyReviewMarkdown();
-  await navigator.clipboard.writeText(markdown);
-  showToast('Weekly Review copiado.');
+  try {
+    await copyTextRobust(markdown);
+    showToast('Weekly Review copiado.');
+  } catch (error) {
+    console.warn('[Markdown] Falha ao copiar weekly review:', error);
+    showToast('Não foi possível copiar. Use baixar .md.');
+  }
 }
 
 async function downloadWeeklyReviewMarkdown() {
@@ -2143,8 +2205,13 @@ async function exportMarkdown(mode, date = state.selectedDate) {
   const markdown = await getMarkdown(date);
 
   if (mode === 'copy') {
-    await navigator.clipboard.writeText(markdown);
-    showToast('Markdown copiado.');
+    try {
+      await copyTextRobust(markdown);
+      showToast('Markdown copiado.');
+    } catch (error) {
+      console.warn('[Markdown] Falha ao copiar:', error);
+      showToast('Não foi possível copiar. Use baixar .md.');
+    }
     return;
   }
 
@@ -2918,12 +2985,14 @@ function attachEvents() {
     state.reviewExport.date = elements.reviewDateInput.value || state.selectedDate;
     state.reviewExport.month = state.reviewExport.date.slice(0, 7);
     state.reviewExport.payload = null;
+    state.currentReview = null;
     loadReviewPreview();
   });
   elements.reviewMonthInput?.addEventListener('change', () => {
     state.reviewExport.month = elements.reviewMonthInput.value || state.currentMonth;
     state.reviewExport.date = `${state.reviewExport.month}-01`;
     state.reviewExport.payload = null;
+    state.currentReview = null;
     loadReviewPreview();
   });
   elements.reviewQuickButtons.forEach((button) => {

@@ -5212,3 +5212,14 @@ body.focus-mode .lockin-time {
     max-height: 280px;
   }
 }
+
+
+/* ==========================================================================
+   V1.3.5.2 — MARKDOWN FULL EXPORT FIX
+   ========================================================================== */
+
+.review-markdown-preview {
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
